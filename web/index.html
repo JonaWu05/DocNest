@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ .Title }}</title>
+  {{ if .LoginBg }}<!-- 自訂登入背景圖（環境變數 LOGIN_BG）；未設定時用 styles.css 的暖色漸層預設 -->
+  <style>{{ .LoginBg }}</style>{{ end }}
+
+  <!-- 第三方相依一律由後端 /static/vendor 本地提供（pinned 版本），不依賴外部 CDN -->
+  <!-- FontAwesome 4.7（EasyMDE 工具列圖示；已關閉 EasyMDE 的 autoDownloadFontAwesome）-->
+  <link rel="stylesheet" href="/static/vendor/fontawesome/css/font-awesome.min.css">
+  <!-- EasyMDE 編輯器樣式 -->
+  <link rel="stylesheet" href="/static/vendor/easymde.min.css">
+  <!-- EasyMDE 編輯器程式 -->
+  <script src="/static/vendor/easymde.min.js"></script>
+  <!-- marked.js：Markdown 轉 HTML -->
+  <script src="/static/vendor/marked.min.js"></script>
+  <!-- DOMPurify：渲染前消毒 HTML，防止 Markdown 內嵌指令碼造成 XSS（提供全域 window.DOMPurify）-->
+  <script src="/static/vendor/purify.min.js"></script>
+
+  <!-- 應用程式樣式（由後端 /static 提供）-->
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+
+<body>
+  <!-- 登入頁：與主介面同一份 HTML，未登入時顯示、登入後隱藏 -->
+  <div id="login-view" class="hidden">
+    <div class="login-card">
+      <div class="login-logo"><i class="fa fa-pencil-square-o"></i></div>
+      <h1 class="login-title">{{ .Title }}</h1>
+      <p class="login-subtitle">請先登入以存取文件</p>
+
+      <!-- 一、Local Account 登入 -->
+      <form id="login-form" class="login-form" autocomplete="on">
+        <input type="text" id="login-username" placeholder="帳號" autocomplete="username" required>
+        <input type="password" id="login-password" placeholder="密碼" autocomplete="current-password" required>
+        <button type="submit" class="login-btn">登入</button>
+        <div id="login-error" class="login-error"></div>
+      </form>
+
+      <div class="login-divider"><span>或</span></div>
+
+      <!-- 二、Discord OAuth 登入 -->
+      <button id="discord-login-btn" type="button" class="discord-btn">
+        <span class="discord-mark">🎮</span> 使用 Discord 登入
+      </button>
+    </div>
+  </div>
+
+  <div id="app" class="hidden">
+    <!-- 左側：檔案樹 -->
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <span>檔案</span>
+        <div id="sidebar-actions">
+          <button class="icon-btn" id="new-file-btn" title="新增檔案"><i class="fa fa-file-o"></i></button>
+          <button class="icon-btn" id="new-dir-btn" title="新增資料夾"><i class="fa fa-folder-o"></i></button>
+          <button class="icon-btn" id="refresh-btn" title="重新整理"><i class="fa fa-refresh"></i></button>
+        </div>
+      </div>
+      <div id="file-tree"></div>
+      <!-- 文件目錄：依目前文件的標題自動產生，點擊跳轉到對應段落 -->
+      <div id="toc-section">
+        <div id="toc-header"><span id="toc-toggle">▾</span> 目錄</div>
+        <div id="toc-list"></div>
+      </div>
+    </aside>
+
+    <!-- 拖曳調整側欄寬度 -->
+    <div id="sidebar-resizer" title="拖曳調整側欄寬度"></div>
+
+    <!-- 右側：工具列 + 內容 -->
+    <main id="main">
+      <div id="toolbar">
+        <span id="current-file"><span id="dirty-dot" class="hidden">●</span><span id="file-name">尚未開啟檔案</span></span>
+        <div id="mode-group">
+          <button data-mode="preview" class="active" title="預覽 (Ctrl+1)" disabled>預覽</button>
+          <button data-mode="edit" title="編輯 (Ctrl+2)" disabled>編輯</button>
+          <button data-mode="split" title="分割 (Ctrl+3)" disabled>分割</button>
+        </div>
+        <button class="tool-btn" id="attach-btn" title="上傳圖片或附件並插入" disabled><i class="fa fa-paperclip"></i> 附件</button>
+        <button class="tool-btn" id="export-btn" title="匯出 PDF（透過瀏覽器列印，於對話框選「另存為 PDF」）" disabled><i class="fa fa-file-pdf-o"></i> PDF</button>
+        <label class="autosave-label" title="編輯後自動儲存">
+          <input type="checkbox" id="autosave-toggle"> 自動儲存
+        </label>
+        <button class="tool-btn" id="theme-btn" title="切換深色 / 淺色模式"><i class="fa fa-moon-o"></i></button>
+        <!-- 目前在線人數 -->
+        <span id="online-count" class="online-count" title="目前在線人數"></span>
+        <!-- 登入者資訊與登出 -->
+        <span id="user-badge" class="user-badge" title="目前登入者">
+          <span id="user-name"></span><span id="user-type" class="user-type-tag"></span>
+        </span>
+        <button class="tool-btn" id="logout-btn" title="登出">登出</button>
+        <button id="save-btn" title="儲存 (Ctrl+S)" disabled>儲存</button>
+      </div>
+      <!-- Presence：顯示誰在看/編輯目前檔案、其他在線者 -->
+      <div id="presence-bar" class="presence-bar empty"></div>
+      <!-- 即時同步提示條：別人儲存了目前正在編輯的檔案 -->
+      <div id="update-bar" class="hidden">
+        <span id="update-bar-msg"></span>
+        <span class="update-bar-actions">
+          <button id="update-bar-load" class="update-bar-btn primary">載入</button>
+          <button id="update-bar-overwrite" class="update-bar-btn hidden">覆蓋</button>
+          <button id="update-bar-ignore" class="update-bar-btn">忽略</button>
+        </span>
+      </div>
+      <div id="content" class="preview">
+        <div id="editor-pane">
+          <textarea id="editor"></textarea>
+        </div>
+        <div id="preview-pane">
+          <div class="empty-state"><i class="fa fa-file-text-o"></i><p>從左側選擇一個檔案開始閱讀或編輯</p></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 隱藏的檔案選擇器，供上傳使用 -->
+  <input type="file" id="attach-input" class="hidden" multiple>
+
+  <!-- 附件庫對話框：可上傳新檔，或從已上傳的附件中挑選插入 -->
+  <div id="asset-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span>插入附件</span>
+        <button class="icon-btn" id="asset-close" title="關閉"><i class="fa fa-times"></i></button>
+      </div>
+      <div class="modal-toolbar">
+        <label class="asset-target-label">目的地
+          <select id="asset-target" title="附件會存到 assets 目錄底下所選的資料夾"></select>
+        </label>
+        <button class="icon-btn" id="asset-newdir-btn" title="新增資料夾"><i class="fa fa-folder-o"></i></button>
+        <button class="tool-btn" id="asset-upload-btn"><i class="fa fa-upload"></i> 上傳到此資料夾</button>
+      </div>
+      <div class="modal-subtoolbar"><span id="asset-hint"></span></div>
+      <div class="asset-grid" id="asset-grid"></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <!-- 連線中斷時的非侵入式提示 -->
+  <div id="reconnect-toast" class="hidden">⚠ 連線中斷，嘗試重新連線…</div>
+
+  <!-- 應用程式進入點：ES 模組（等同 defer，於 DOM 解析後執行）-->
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+
+</html>

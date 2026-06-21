@@ -1,0 +1,1383 @@
+/* ===== 主題色彩變數：淺色（預設）===== */
+:root {
+  --bg: #ffffff;
+  --bg-alt: #f7f8fa;
+  --bg-elev: #ffffff;
+  --text: #24292e;
+  --text-muted: #888888;
+  --border: #e3e6ea;
+  --border-soft: #eeeeee;
+  --hover: #eef0f3;
+  --active: #e2edff;
+  --accent: #3b82f6;
+  --accent-hover: #2f6fd6;
+  --code-bg: #f6f8fa;
+  --inline-code-bg: #f0f0f0;
+  --btn-bg: #eceef1;
+  --btn-bg-hover: #dfe2e6;
+}
+
+/* ===== 深色主題：套用 body.dark 時覆蓋變數 ===== */
+body.dark {
+  --bg: #1e1e1e;
+  --bg-alt: #252526;
+  --bg-elev: #2d2d30;
+  --text: #d4d4d4;
+  --text-muted: #9a9a9a;
+  --border: #3c3c3c;
+  --border-soft: #333333;
+  --hover: #2a2d2e;
+  --active: #0b4a7a;
+  --accent: #3b82f6;
+  --accent-hover: #5b9bf8;
+  --code-bg: #2d2d2d;
+  --inline-code-bg: #333333;
+  --btn-bg: #3a3a3a;
+  --btn-bg-hover: #4a4a4a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+#app {
+  display: flex;
+  height: 100vh;
+}
+
+/* 左側檔案樹 */
+#sidebar {
+  width: 280px;
+  min-width: 200px;
+  flex: 0 0 auto; /* 維持設定寬度，不因主區內容變寬而被壓縮 */
+  border-right: 1px solid var(--border);
+  background: var(--bg-alt);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 側欄與主區之間的拖曳調整條 */
+#sidebar-resizer {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background-color 0.12s ease;
+}
+
+#sidebar-resizer:hover,
+body.resizing-sidebar #sidebar-resizer {
+  background: var(--accent);
+}
+
+/* 拖曳期間：停用選取並全域顯示調整游標，避免選到文字或編輯器搶走事件 */
+body.resizing-sidebar {
+  user-select: none;
+  cursor: col-resize;
+}
+
+#sidebar-header {
+  padding: 10px 12px;
+  font-weight: bold;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#sidebar-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.icon-btn {
+  cursor: pointer;
+  border: none;
+  background: var(--btn-bg);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.icon-btn:hover {
+  background: var(--btn-bg-hover);
+}
+
+#file-tree {
+  padding: 8px 0;
+  flex: 1;
+}
+
+.tree-node {
+  user-select: none;
+}
+
+.tree-label {
+  padding: 4px 8px 4px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tree-label:hover {
+  background: var(--hover);
+}
+
+.tree-label.active {
+  background: var(--active);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.tree-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-actions {
+  display: none;
+  gap: 2px;
+}
+
+.tree-label:hover .node-actions {
+  display: flex;
+}
+
+.node-actions button {
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
+.node-actions button:hover {
+  background: var(--btn-bg-hover);
+}
+
+.tree-children {
+  padding-left: 14px;
+}
+
+.tree-children.collapsed {
+  display: none;
+}
+
+.toggle-icon {
+  width: 12px;
+  display: inline-block;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* 右側主區 */
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap; /* 視窗變窄時換行，避免按鈕被擠出畫面 */
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+
+#current-file {
+  font-weight: bold;
+  flex: 1;
+  min-width: 140px; /* 可收縮並以省略號顯示，但保留最小可讀寬度 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+#dirty-dot {
+  color: #ed4014;
+  margin-right: 4px;
+}
+
+#mode-group {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+#mode-group button {
+  cursor: pointer;
+  border: none;
+  background: var(--bg-elev);
+  color: var(--text);
+  padding: 6px 12px;
+  font-size: 14px;
+  border-left: 1px solid var(--border);
+}
+
+#mode-group button:first-child {
+  border-left: none;
+}
+
+#mode-group button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+#mode-group button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.autosave-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tool-btn {
+  cursor: pointer;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+.tool-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.tool-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#save-btn {
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 14px;
+}
+
+#save-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+#save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 內容區 */
+#content {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+#editor-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#content.split #editor-pane {
+  border-right: 1px solid var(--border);
+}
+
+#editor-pane .EasyMDEContainer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+#editor-pane .CodeMirror {
+  flex: 1;
+  min-height: 0;
+}
+
+#preview-pane {
+  flex: 1;
+  min-width: 0;
+  padding: 24px 32px;
+  overflow: auto;
+  line-height: 1.75;
+  color: var(--text);
+}
+
+/* 單欄預覽模式：限制閱讀寬度並置中，長行更好讀（分割模式維持滿版） */
+#content.preview #preview-pane {
+  padding-left: max(32px, (100% - 860px) / 2);
+  padding-right: max(32px, (100% - 860px) / 2);
+}
+
+#preview-pane img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+#preview-pane a {
+  color: var(--accent);
+}
+
+/* 站內文件連結（指向 .md/.txt，點擊在 app 內開啟）：以虛線底線稍作區別 */
+#preview-pane a.doc-link {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+#preview-pane pre {
+  background: var(--code-bg);
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  overflow: auto;
+}
+
+#preview-pane code {
+  background: var(--inline-code-bg);
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+#preview-pane pre code {
+  background: none;
+  padding: 0;
+}
+
+#preview-pane blockquote {
+  border-left: 4px solid var(--border);
+  color: var(--text-muted);
+  margin: 0;
+  padding: 0 14px;
+}
+
+#preview-pane table {
+  border-collapse: collapse;
+  margin: 0 0 1em;
+}
+
+#preview-pane table th,
+#preview-pane table td {
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+}
+
+#preview-pane table th {
+  background: var(--bg-alt);
+  font-weight: 600;
+}
+
+#preview-pane table tr:nth-child(even) td {
+  background: var(--bg-alt);
+}
+
+/* ===== 預覽排版：標題級距、段落、清單、分隔線 ===== */
+#preview-pane > :first-child {
+  margin-top: 0;
+}
+
+#preview-pane h1,
+#preview-pane h2,
+#preview-pane h3,
+#preview-pane h4,
+#preview-pane h5,
+#preview-pane h6 {
+  margin: 1.6em 0 0.6em;
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+#preview-pane h1 {
+  font-size: 1.9em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+#preview-pane h2 {
+  font-size: 1.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+#preview-pane h3 { font-size: 1.25em; }
+#preview-pane h4 { font-size: 1.05em; }
+
+#preview-pane p,
+#preview-pane ul,
+#preview-pane ol {
+  margin: 0 0 1em;
+}
+
+#preview-pane li + li {
+  margin-top: 0.25em;
+}
+
+#preview-pane hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2em 0;
+}
+
+.empty-hint {
+  color: var(--text-muted);
+  padding: 40px;
+  text-align: center;
+}
+
+/* 預覽未開檔時的空狀態：置中的大圖示 + 提示 */
+.empty-state {
+  min-height: 64vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.empty-state .fa {
+  font-size: 52px;
+  opacity: 0.45;
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ===== A 包美化：互動過渡、焦點環、細捲軸、層次 ===== */
+
+/* 互動元素加上過渡，hover/active 不再瞬間跳變 */
+.icon-btn,
+.tool-btn,
+#save-btn,
+#mode-group button,
+.tree-label,
+.node-actions button,
+.dialog-btn,
+.update-bar-btn {
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* 鍵盤操作的焦點環（滑鼠點擊不顯示，僅鍵盤聚焦時出現） */
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 工具列加一道很淡的下緣陰影，與內容區分出層次 */
+#toolbar {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+body.dark #toolbar {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+/* 細捲軸（WebKit），配合主題色 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Firefox 細捲軸 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* ===== B 包：FontAwesome 圖示一致化 ===== */
+
+/* 樹狀的檔案 / 資料夾圖示，固定寬度以對齊 */
+.tree-glyph {
+  display: inline-block;
+  width: 16px;
+  margin-right: 4px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.tree-label.active .tree-glyph {
+  color: var(--accent);
+}
+
+/* 帶文字的按鈕中的圖示，與文字間留點間距、垂直置中 */
+.tool-btn .fa,
+.update-bar-btn .fa {
+  margin-right: 5px;
+}
+
+/* 純圖示按鈕（側欄、附件庫工具列、樹列操作）統一字級 */
+.icon-btn .fa,
+.node-actions .fa {
+  font-size: 13px;
+}
+
+/* ===== EasyMDE 深色覆蓋 ===== */
+body.dark .editor-toolbar {
+  background: var(--bg-elev);
+  border-color: var(--border);
+}
+
+body.dark .editor-toolbar button {
+  color: var(--text) !important;
+}
+
+body.dark .editor-toolbar button:hover,
+body.dark .editor-toolbar button.active {
+  background: var(--btn-bg);
+  border-color: var(--border);
+}
+
+body.dark .editor-toolbar i.separator {
+  border-color: var(--border);
+}
+
+body.dark .EasyMDEContainer .CodeMirror {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+body.dark .CodeMirror-cursor {
+  border-left-color: var(--text);
+}
+
+body.dark .CodeMirror-selected {
+  background: #264f78 !important;
+}
+
+body.dark .editor-statusbar {
+  color: var(--text-muted);
+}
+
+/* 深色下調整 Markdown 語法標記的可讀性 */
+body.dark .cm-s-easymde .cm-header {
+  color: #569cd6;
+}
+
+body.dark .cm-s-easymde .cm-link,
+body.dark .cm-s-easymde .cm-url {
+  color: #4ec9b0;
+}
+
+body.dark .cm-s-easymde .cm-quote {
+  color: #9a9a9a;
+}
+
+body.dark .cm-s-easymde .cm-comment {
+  color: #6a9955;
+}
+
+/* 拖放上傳時的視覺提示 */
+.drop-active {
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+}
+
+/* ===== 附件庫對話框 ===== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+}
+
+.modal {
+  width: 680px;
+  max-width: 92vw;
+  max-height: 82vh;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: bold;
+}
+
+/* 站內對話框（取代原生 confirm / prompt），沿用主題變數 */
+.dialog {
+  width: 420px;
+  max-width: 92vw;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dialog-msg {
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-line; /* 保留訊息中的換行（例如刪除確認附上的路徑） */
+  word-break: break-word;
+}
+
+.dialog-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+.dialog-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dialog-btn {
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--btn-bg);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.dialog-btn:hover {
+  background: var(--btn-bg-hover);
+}
+
+.dialog-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.dialog-btn.primary:hover {
+  background: var(--accent-hover);
+}
+
+.modal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+#asset-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.asset-target-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.modal-toolbar select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 13px;
+  max-width: 220px;
+}
+
+.modal-subtoolbar {
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.asset-grid {
+  padding: 14px 16px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.asset-item {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  transition: border-color 0.15s, transform 0.1s;
+}
+
+.asset-item {
+  position: relative;
+}
+
+.asset-item:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.asset-del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 5px;
+  cursor: pointer;
+  display: none;
+}
+
+.asset-item:hover .asset-del {
+  display: block;
+}
+
+.asset-del:hover {
+  background: #ed4014;
+}
+
+.asset-thumb {
+  width: 100%;
+  height: 80px;
+  object-fit: contain;
+  background: var(--bg-alt);
+  border-radius: 4px;
+}
+
+.asset-thumb-file {
+  width: 100%;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  background: var(--bg-alt);
+  border-radius: 4px;
+}
+
+.asset-name {
+  font-size: 12px;
+  width: 100%;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asset-size {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 提示訊息（toast）*/
+#toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 20px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+#toast.show {
+  opacity: 1;
+}
+
+#toast.success {
+  background: #19be6b;
+}
+
+#toast.error {
+  background: #ed4014;
+}
+
+#toast.info {
+  background: #2d8cf0;
+}
+
+/* ===== 文件目錄（TOC）===== */
+#toc-section {
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  max-height: 45%;
+}
+
+#toc-header {
+  padding: 8px 12px;
+  font-weight: bold;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+#toc-header:hover {
+  background: var(--hover);
+}
+
+#toc-toggle {
+  width: 12px;
+  display: inline-block;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+#toc-list {
+  overflow-y: auto;
+  padding: 4px 0 8px;
+}
+
+#toc-section.collapsed #toc-list {
+  display: none;
+}
+
+.toc-item {
+  padding: 3px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.toc-item:hover {
+  background: var(--hover);
+  color: var(--accent);
+}
+
+.toc-empty {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ===== 列印 / 匯出 PDF：只保留預覽內容，並強制亮色以利閱讀 ===== */
+@media print {
+
+  #sidebar,
+  #toolbar,
+  #asset-modal,
+  #toast,
+  #editor-pane {
+    display: none !important;
+  }
+
+  #app,
+  #main,
+  #content {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* 以雙 id 選擇器壓過 .hidden（編輯模式時預覽本為隱藏），列印時仍強制顯示 */
+  #content #preview-pane {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    color: #000 !important;
+    background: #fff !important;
+  }
+
+  #preview-pane a {
+    color: #0645ad !important;
+    text-decoration: underline;
+  }
+
+  #preview-pane pre {
+    background: #f6f8fa !important;
+  }
+
+  #preview-pane code {
+    background: #f0f0f0 !important;
+  }
+
+  #preview-pane blockquote {
+    color: #555 !important;
+    border-left-color: #ccc !important;
+  }
+
+  #preview-pane table th,
+  #preview-pane table td {
+    border-color: #ccc !important;
+  }
+
+  #preview-pane img {
+    max-width: 100% !important;
+  }
+
+  @page {
+    margin: 1.6cm;
+  }
+}
+
+/* ===== 登入頁 ===== */
+#login-view {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 登入畫面固定走暗色（不受 app 主題切換影響）：覆寫卡片/輸入框/文字所用的變數 */
+  --bg: #1b1d22;
+  --bg-elev: #25282f;
+  --text: #e6e8ec;
+  --text-muted: #9aa0aa;
+  --border: #3a3e46;
+  --border-soft: #34383f;
+  /* 深色系漸層紋理（兩道冷光暈 + 斜向深色漸層）。可由環境變數 LOGIN_BG 換成自訂背景圖。 */
+  background:
+    radial-gradient(900px 480px at 50% -10%, rgba(59, 130, 246, 0.20), transparent 70%),
+    radial-gradient(720px 440px at 88% 112%, rgba(139, 92, 246, 0.16), transparent 70%),
+    linear-gradient(160deg, #0f1115 0%, #161922 48%, #1c2030 100%);
+  background-size: cover;
+  z-index: 10000;
+}
+
+.login-card {
+  width: 360px;
+  max-width: 92vw;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px 28px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.22);
+}
+
+/* 登入卡片上方的品牌標記 */
+.login-logo {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 16px;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  box-shadow: 0 6px 18px rgba(59, 130, 246, 0.35);
+}
+
+.login-title {
+  margin: 0 0 4px;
+  font-size: 22px;
+  text-align: center;
+  color: var(--text);
+}
+
+.login-subtitle {
+  margin: 0 0 22px;
+  font-size: 13px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.login-form input {
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.login-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+
+.login-btn {
+  margin-top: 4px;
+  padding: 10px;
+  font-size: 15px;
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  transition: background-color 0.12s ease, transform 0.04s ease;
+}
+
+.login-btn:hover {
+  background: var(--accent-hover);
+}
+
+.login-btn:active {
+  transform: translateY(1px);
+}
+
+.login-error {
+  min-height: 18px;
+  font-size: 13px;
+  color: #ed4014;
+  text-align: center;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 14px 0;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border-soft);
+}
+
+.login-divider span {
+  padding: 0 10px;
+}
+
+/* Discord 品牌色按鈕 */
+.discord-btn {
+  width: 100%;
+  padding: 10px;
+  font-size: 15px;
+  cursor: pointer;
+  background: #5865F2;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.discord-btn:hover {
+  background: #4752c4;
+}
+
+.discord-mark {
+  font-size: 16px;
+}
+
+/* ===== 工具列：登入者資訊 ===== */
+.user-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  max-width: 200px;
+  overflow: hidden;
+}
+
+#user-name {
+  font-weight: bold;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-type-tag {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.user-type-tag.is-local {
+  background: var(--accent);
+}
+
+.user-type-tag.is-discord {
+  background: #5865F2;
+}
+
+/* ===== 在線人數 ===== */
+.online-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.online-count:hover {
+  color: var(--accent);
+  background: var(--hover);
+}
+
+/* 在線成員清單浮層 */
+.online-popover {
+  position: fixed;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  padding: 8px;
+  z-index: 9500;
+}
+
+.online-popover-head {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 8px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 4px;
+}
+
+.online-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.online-row:hover {
+  background: var(--hover);
+}
+
+.online-row-icon {
+  width: 16px;
+  text-align: center;
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+
+.online-row-icon.editing { color: #e8a33d; }
+.online-row-icon.viewing { color: var(--accent); }
+.online-row-icon.idle { color: #19be6b; font-size: 9px; }
+
+.online-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.online-row-name {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.online-row-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ===== Presence 列（工具列下方）===== */
+.presence-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-alt);
+  min-height: 32px;
+}
+
+.presence-bar.empty {
+  display: none; /* 沒有其他人時不佔空間 */
+}
+
+.presence-chip {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.presence-chip.editing {
+  border-color: #ed9a40;
+}
+
+.presence-chip.viewing {
+  border-color: var(--accent);
+}
+
+/* ===== 即時同步提示條 ===== */
+#update-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #fff7e6;
+  border-bottom: 1px solid #ffd591;
+  color: #7a4d00;
+  font-size: 14px;
+}
+
+body.dark #update-bar {
+  background: #3a2f1a;
+  border-bottom-color: #6b5320;
+  color: #f0c987;
+}
+
+.update-bar-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.update-bar-btn {
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.update-bar-btn.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* ===== 檔案樹 Presence 小圓點 ===== */
+.tree-dot {
+  color: #f5b301;
+  font-size: 10px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+/* ===== 連線中斷提示 ===== */
+#reconnect-toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  border-radius: 6px;
+  background: #ed9a40;
+  color: #fff;
+  font-size: 13px;
+  z-index: 9998;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}

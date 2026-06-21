@@ -1,0 +1,25 @@
+// DOM 參考集中管理。
+// 本檔由 type="module" 載入（等同 defer），執行時 DOM 已解析完成，故可直接取得元素。
+export const fileTreeEl = document.getElementById("file-tree");
+export const fileNameEl = document.getElementById("file-name");
+export const dirtyDotEl = document.getElementById("dirty-dot");
+export const modeGroupEl = document.getElementById("mode-group");
+export const modeButtons = modeGroupEl.querySelectorAll("button");
+export const saveBtn = document.getElementById("save-btn");
+export const attachBtn = document.getElementById("attach-btn");
+export const exportBtn = document.getElementById("export-btn");
+export const attachInput = document.getElementById("attach-input");
+export const assetModal = document.getElementById("asset-modal");
+export const assetGrid = document.getElementById("asset-grid");
+export const assetHint = document.getElementById("asset-hint");
+export const assetTarget = document.getElementById("asset-target");
+export const autosaveToggle = document.getElementById("autosave-toggle");
+export const themeBtn = document.getElementById("theme-btn");
+export const contentEl = document.getElementById("content");
+export const editorPane = document.getElementById("editor-pane");
+export const previewPane = document.getElementById("preview-pane");
+export const toastEl = document.getElementById("toast");
+export const tocSection = document.getElementById("toc-section");
+export const tocHeader = document.getElementById("toc-header");
+export const tocToggle = document.getElementById("toc-toggle");
+export const tocList = document.getElementById("toc-list");

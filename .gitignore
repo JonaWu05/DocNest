@@ -1,0 +1,18 @@
+# 編譯產物（Go 二進位檔）
+*.exe
+markdownEditor
+
+# 環境變數（含密鑰、密碼 hash，不可進版控）；.env.example 可保留作為範本
+.env
+
+# 作業系統 / 編輯器雜項
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 使用者文件內容：docs 為 DOC_ROOT（執行期資料，等同各自的資料庫目錄），整個不納入版控；
+# 僅保留預設首頁 welcome.md 作為應用程式附帶的範本（DEFAULT_DOC 預設指向它）。
+# 上傳的附件（docs/assets/）也一併被涵蓋。
+/docs/*
+!/docs/welcome.md
