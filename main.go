@@ -37,6 +37,18 @@ func accessLogFormatter(p gin.LogFormatterParams) string {
 // 留空代表「開發模式」：CORS 與 WebSocket 皆允許所有來源。
 var allowedOrigins []string
 
+// parseTrustedProxies 解析 TRUSTED_PROXIES（逗號分隔的 IP 或 CIDR）。
+// 留空回傳 nil，等同不信任任何代理（與原本 SetTrustedProxies(nil) 行為一致）。
+func parseTrustedProxies(raw string) []string {
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // loadAllowedOrigins 解析 ALLOWED_ORIGINS（如 "https://a.com,https://b.com"）
 func loadAllowedOrigins() {
 	for _, o := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
@@ -126,9 +138,10 @@ func main() {
 	r := gin.New()
 	r.Use(gin.LoggerWithFormatter(accessLogFormatter), gin.Recovery())
 
-	// 不信任 X-Forwarded-For 等代理標頭（預設會信任，導致 ClientIP 可被偽造、繞過登入限流）。
-	// 若實際部署在反向代理後方，應改為設定信任的 proxy 來源。
-	if err := r.SetTrustedProxies(nil); err != nil {
+	// 信任的反向代理來源：預設不信任任何代理標頭（避免 X-Forwarded-For 被偽造、繞過登入限流）。
+	// 部署在反向代理後方時，用 TRUSTED_PROXIES 指定代理主機（逗號分隔，支援 IP 或 CIDR），
+	// gin 才會讀 X-Forwarded-For 還原真實客戶端 IP。例：TRUSTED_PROXIES=172.24.15.23
+	if err := r.SetTrustedProxies(parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))); err != nil {
 		panic("設定 trusted proxies 失敗：" + err.Error())
 	}
 

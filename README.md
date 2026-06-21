@@ -62,6 +62,7 @@ go run .
 | `DEFAULT_DOC` | — | 登入後自動開啟的首頁文件（相對 `DOC_ROOT`）|
 | `JWT_EXPIRE_HOURS` | — | JWT 有效時數，預設 `24` |
 | `ALLOWED_ORIGINS` | — | 允許的跨來源網域（CORS 與 WebSocket 共用），逗號分隔；留空為開發模式（允許所有來源）|
+| `TRUSTED_PROXIES` | — | 信任的反向代理來源（IP 或 CIDR，逗號分隔）；架在反向代理後方時設定，才能取得真實客戶端 IP。留空為不信任任何代理 |
 | `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` / `DISCORD_REDIRECT_URI` / `DISCORD_ALLOWED_IDS` | — | Discord OAuth（選填，全部設定才啟用）|
 
 > `.env` 含密鑰與密碼 hash，已列入 `.gitignore`，請勿提交。`docs/` 為執行期資料（等同各自的資料庫目錄），亦不納入版控，僅保留 `welcome.md` 作為範本。
