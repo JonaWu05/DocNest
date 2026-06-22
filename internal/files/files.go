@@ -247,6 +247,11 @@ func (f *Files) Create(c *gin.Context) {
 		return
 	}
 
+	if err := store.ValidateRelPath(pathParam); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	absPath, err := f.store.SafeResolve(pathParam)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
@@ -291,6 +296,12 @@ func (f *Files) Rename(c *gin.Context) {
 	newParam := c.Query("newPath")
 	if oldParam == "" || newParam == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 或 newPath 參數"})
+		return
+	}
+
+	// 目標路徑為使用者新提供的名稱，須驗證合法性（來源已存在、不再重驗）。
+	if err := store.ValidateRelPath(newParam); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 

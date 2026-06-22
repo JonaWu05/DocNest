@@ -160,6 +160,37 @@ func TestLockSerializes(t *testing.T) {
 	}
 }
 
+// TestValidateRelPath 驗證跨平台檔名規則：合法者放行、非法者拒絕。
+func TestValidateRelPath(t *testing.T) {
+	valid := []string{
+		"notes/a.md", "teamA/sub/b.txt", "報告.md", "a-b_c.1.md",
+		"assets", "x/../y.md", // 穿越交給 SafeResolve，這裡不擋
+	}
+	for _, p := range valid {
+		if err := ValidateRelPath(p); err != nil {
+			t.Errorf("ValidateRelPath(%q) 應通過，得到 %v", p, err)
+		}
+	}
+
+	invalid := []string{
+		"a<b.md",          // 非法字元
+		"a:b.md",          // 非法字元（Windows 磁碟分隔）
+		"a|b.md",          // 非法字元
+		"foo/CON.md",      // 保留裝置名
+		"nul",             // 保留裝置名（無副檔名）
+		"LPT1.txt",        // 保留裝置名（大小寫不敏感）
+		"trailing.md ",    // 段結尾空白
+		"dir/ leading.md", // 段首空白
+		"end.",            // 結尾為點
+		"a\x00b.md",       // 控制字元
+	}
+	for _, p := range invalid {
+		if err := ValidateRelPath(p); err == nil {
+			t.Errorf("ValidateRelPath(%q) 應被拒絕", p)
+		}
+	}
+}
+
 func mustMkdir(t *testing.T, p string) {
 	t.Helper()
 	if err := os.MkdirAll(p, 0o755); err != nil {

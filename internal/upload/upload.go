@@ -73,6 +73,10 @@ func (u *Upload) UploadFile(c *gin.Context) {
 
 	// 產生不重複的檔名（時間戳記 + 原始檔名），filepath.Base 可去除任何路徑成分
 	origName := filepath.Base(fileHeader.Filename)
+	if err := store.ValidateRelPath(origName); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "檔名不合法：" + err.Error()})
+		return
+	}
 	unique := fmt.Sprintf("%d_%s", time.Now().UnixNano(), origName)
 	storeRel := targetDir + "/" + unique
 

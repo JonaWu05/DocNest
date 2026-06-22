@@ -177,9 +177,11 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// 先停 HTTP（不再接收新請求，也就不會再產生 file_updated 廣播）；
+	// 被劫持的 WebSocket 連線不受 http.Server.Shutdown 管轄，故隨後由 Hub.Close 主動收尾。
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("[關閉] 等待逾時，強制結束：%v", err)
-	} else {
-		log.Println("[關閉] 已正常關閉")
+		log.Printf("[關閉] HTTP 等待逾時，強制結束：%v", err)
 	}
+	h.Close()
+	log.Println("[關閉] 已關閉所有連線，正常結束")
 }

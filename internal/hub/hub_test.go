@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"markdownEditor/internal/authz"
+	"markdownEditor/internal/config"
 )
 
 // loadAuthz 在臨時目錄寫一份 permissions.json 並載入，供權限過濾測試使用。
@@ -139,4 +141,38 @@ func TestDeliverFiltersByReadPermission(t *testing.T) {
 	if len(bob.send) != 1 {
 		t.Error("bob 有 secret 讀取權，應收到通知")
 	}
+}
+
+// TestCloseShutsDownRun 驗證 Close 會結束 Run 迴圈並關閉所有連線的 send channel。
+func TestCloseShutsDownRun(t *testing.T) {
+	h := New(nil, nil, &config.Config{})
+	done := make(chan struct{})
+	go func() { h.Run(); close(done) }()
+
+	c := &Client{send: make(chan []byte, 4), subject: "local:x"}
+	h.register <- c // 經由 Run 註冊，確保在 hub goroutine 內加入 clients
+
+	h.Close()
+
+	// Run 應結束
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close 後 Run 未結束")
+	}
+
+	// 連線的 send 應被關閉（writePump 據此送出 Close frame 後退出）
+	select {
+	case _, ok := <-c.send:
+		if ok {
+			// 可能先有 presence 訊息；耗盡後最終應關閉
+			for range c.send {
+			}
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("send channel 未關閉")
+	}
+
+	// Close 可重複呼叫而不 panic
+	h.Close()
 }

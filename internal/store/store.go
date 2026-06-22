@@ -2,6 +2,8 @@
 package store
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -112,6 +114,63 @@ func (s *Store) RelOf(absPath string) string {
 // BuildTree 建立 Root 底下的檔案樹，回傳根節點（其 Children 即頂層項目）。
 func (s *Store) BuildTree() (*FileNode, error) {
 	return buildTree(s.Root, "")
+}
+
+// reservedNames 為 Windows 保留的裝置名稱（不分大小寫，含或不含副檔名皆視為非法）。
+// 即使部署在 Linux，也一併禁止以維持跨平台一致並避免日後遷移踩雷。
+var reservedNames = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
+	"com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
+	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+}
+
+// ValidateRelPath 檢查使用者提供之相對路徑的每一段檔名是否合法（跨平台安全）。
+// 僅驗名稱字元；路徑穿越仍由 SafeResolve 負責。
+func ValidateRelPath(p string) error {
+	p = strings.ReplaceAll(p, "\\", "/")
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			continue
+		}
+		if err := validateName(seg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateName 驗證單一路徑分段（檔名或資料夾名）。
+func validateName(name string) error {
+	if len(name) > 255 {
+		return errors.New("檔名過長（單段上限 255 位元組）")
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return errors.New("檔名不可包含控制字元")
+		}
+		switch r {
+		case '<', '>', ':', '"', '|', '?', '*':
+			return fmt.Errorf("檔名不可包含字元 %q", r)
+		}
+	}
+	// 首尾空白、結尾的點：在 Windows 會被靜默修剪，易造成混淆或繞過比對。
+	if strings.TrimSpace(name) != name {
+		return errors.New("檔名首尾不可有空白")
+	}
+	if strings.HasSuffix(name, ".") {
+		return errors.New("檔名結尾不可為點")
+	}
+	// Windows 保留裝置名：比對去除副檔名後的主檔名。
+	base := name
+	if i := strings.IndexByte(name, '.'); i >= 0 {
+		base = name[:i]
+	}
+	if reservedNames[strings.ToLower(base)] {
+		return fmt.Errorf("檔名為系統保留名稱：%s", name)
+	}
+	return nil
 }
 
 // isAllowedFile 判斷檔案副檔名是否為允許的文件類型（.md 或 .txt）

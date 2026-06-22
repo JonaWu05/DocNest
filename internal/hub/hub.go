@@ -4,6 +4,7 @@ package hub
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -86,6 +87,10 @@ type Hub struct {
 	unregister chan *Client
 	presence   chan presenceUpdate
 	count      atomic.Int64
+
+	// quit 由 Close() 關閉，通知 Run 結束並讓各 goroutine 的 channel 送出可解除阻塞。
+	quit      chan struct{}
+	closeOnce sync.Once
 }
 
 // New 建立 Hub；需要 auth（serveWs 驗證 token）、az（廣播時依讀取權過濾路徑）與 cfg（WebSocket Origin 檢查）。
@@ -104,7 +109,14 @@ func New(a *auth.Auth, az *authz.Authz, cfg *config.Config) *Hub {
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		presence:   make(chan presenceUpdate),
+		quit:       make(chan struct{}),
 	}
+}
+
+// Close 啟動 Hub 的優雅關閉：通知 Run 結束並關閉所有 WebSocket 連線。
+// 可安全重複呼叫。供伺服器收到結束訊號時呼叫（補 http.Server.Shutdown 不收尾被劫持的 WS 連線之缺口）。
+func (h *Hub) Close() {
+	h.closeOnce.Do(func() { close(h.quit) })
 }
 
 // canRead 判斷某連線是否對指定路徑具讀取權。az 未注入（如測試）或路徑為空時一律放行。
@@ -141,6 +153,16 @@ func (h *Hub) Run() {
 
 		case o := <-h.broadcast:
 			h.deliver(o)
+
+		case <-h.quit:
+			// 關閉所有連線：close(send) 會讓 writePump 送出 Close frame 後結束，
+			// 連帶讓 readPump 讀取出錯而退出。之後 Run 結束，不再處理任何訊息。
+			for c := range h.clients {
+				delete(h.clients, c)
+				close(c.send)
+			}
+			h.count.Store(0)
+			return
 		}
 	}
 }
@@ -232,8 +254,11 @@ func (h *Hub) BroadcastFileUpdated(path, savedBy string) {
 	if err != nil {
 		return
 	}
-	// 帶上 path：deliver 只會送給對該檔具讀取權的連線。
-	h.broadcast <- outbound{data: msg, path: path}
+	// 帶上 path：deliver 只會送給對該檔具讀取權的連線。關閉中則放棄。
+	select {
+	case h.broadcast <- outbound{data: msg, path: path}:
+	case <-h.quit:
+	}
 }
 
 // ServeWs 處理 GET /ws：先用 query 參數的 token 做 JWT 驗證，再升級為 WebSocket。
@@ -262,7 +287,13 @@ func (h *Hub) ServeWs(c *gin.Context) {
 		username: claims.Username,
 		subject:  auth.SubjectFromClaims(claims),
 	}
-	h.register <- client
+	// Hub 已開始關閉時不再接收新連線（避免 register 永久阻塞拖住此 handler）。
+	select {
+	case h.register <- client:
+	case <-h.quit:
+		conn.Close()
+		return
+	}
 
 	go client.writePump()
 	go client.readPump()
@@ -276,7 +307,11 @@ func (h *Hub) OnlineCountHandler(c *gin.Context) {
 // readPump 持續從連線讀取訊息。目前只處理 client_presence（更新自己的狀態）。
 func (c *Client) readPump() {
 	defer func() {
-		c.hub.unregister <- c
+		// Hub 關閉後 Run 已結束，unregister 不再有人接收：以 quit 解除阻塞，避免 goroutine 卡死。
+		select {
+		case c.hub.unregister <- c:
+		case <-c.hub.quit:
+		}
 		c.conn.Close()
 	}()
 
@@ -307,7 +342,11 @@ func (c *Client) readPump() {
 				IsEditing   bool   `json:"is_editing"`
 			}
 			if json.Unmarshal(env.Payload, &p) == nil {
-				c.hub.presence <- presenceUpdate{client: c, currentFile: p.CurrentFile, isEditing: p.IsEditing}
+				select {
+				case c.hub.presence <- presenceUpdate{client: c, currentFile: p.CurrentFile, isEditing: p.IsEditing}:
+				case <-c.hub.quit:
+					return
+				}
 			}
 		}
 	}
