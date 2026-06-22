@@ -68,6 +68,11 @@ func uploadHandler(c *gin.Context) {
 		return
 	}
 
+	// 權限檢查：需對附件目的地具備寫入權
+	if !requireAccess(c, relOf(absTarget), accessWrite) {
+		return
+	}
+
 	// 確保 assets 目錄存在
 	if err := os.MkdirAll(filepath.Dir(absTarget), 0o755); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "建立目錄失敗：" + err.Error()})

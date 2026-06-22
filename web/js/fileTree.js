@@ -38,7 +38,9 @@ export async function loadFileTree() {
     const data = await res.json();
     fileTreeEl.innerHTML = "";
     if (!data.files || data.files.length === 0) {
-      fileTreeEl.innerHTML = '<div class="empty-hint">沒有任何檔案</div>';
+      // 區分「真的沒檔案」與「有檔案但無權限存取」：後者給更明確的提示
+      fileTreeEl.innerHTML = '<div class="empty-hint">' +
+        (state.hasAccess ? "沒有任何檔案" : "沒有可存取的文件") + "</div>";
       return;
     }
     data.files.forEach(node => fileTreeEl.appendChild(renderNode(node)));
@@ -54,8 +56,11 @@ export async function loadFileTree() {
   }
 }
 
-// ===== 建立節點操作按鈕（重新命名 / 刪除）=====
+// ===== 建立節點操作按鈕（重新命名 / 刪除 / 在此新增）=====
+// 無寫入權的節點不提供任何修改操作（伺服器端仍會擋，這裡僅是隱藏避免誤導）。
 function buildNodeActions(node) {
+  if (!node.writable) return null;
+
   const actions = document.createElement("span");
   actions.className = "node-actions";
 
@@ -104,13 +109,18 @@ function renderNode(node) {
   const name = document.createElement("span");
   name.className = "tree-name";
 
+  // 記下此節點是否可寫，供開檔時決定唯讀與否（openFile 由 label 讀取）
+  const writableAttr = node.writable ? "1" : "";
+
   if (node.isDir) {
     name.appendChild(makeGlyph("fa-folder-o"));
     name.append(node.name);
     label.appendChild(icon);
     label.appendChild(name);
-    label.appendChild(buildNodeActions(node));
+    const actions = buildNodeActions(node);
+    if (actions) label.appendChild(actions);
     label.dataset.path = node.path;
+    label.dataset.writable = writableAttr;
 
     const childrenWrap = document.createElement("div");
     childrenWrap.className = "tree-children";
@@ -136,8 +146,10 @@ function renderNode(node) {
     name.append(node.name);
     label.appendChild(icon);
     label.appendChild(name);
-    label.appendChild(buildNodeActions(node));
+    const actions = buildNodeActions(node);
+    if (actions) label.appendChild(actions);
     label.dataset.path = node.path;
+    label.dataset.writable = writableAttr;
 
     label.addEventListener("click", () => openFile(node.path, label));
     wrap.appendChild(label);

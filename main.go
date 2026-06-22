@@ -112,6 +112,9 @@ func main() {
 	// 載入登入驗證設定（USERS / JWT / Discord OAuth）；缺少 JWT_SECRET 會直接中止
 	loadAuthConfig()
 
+	// 載入權限分組設定（permissions.json）；檔案不存在時退回相容的全開模式並警告
+	loadPermissions()
+
 	// 解析允許的跨來源網域（CORS 與 WebSocket 共用）
 	loadAllowedOrigins()
 
@@ -161,11 +164,19 @@ func main() {
 	}
 	r.Use(cors.New(corsConfig))
 
-	// 靜態資源帶 Cache-Control: no-cache：瀏覽器仍可快取，但每次使用前都會向伺服器
-	// 驗證（未變更回 304，很快），改版後不會再沿用舊的 JS/CSS 模組而需手動強制重整。
+	// 靜態資源的快取策略分兩類：
+	//   1. /static/vendor/*（pinned 版本的第三方函式庫，內容永不變動）：長快取 + immutable，
+	//      重複造訪直接命中瀏覽器快取、零回源往返。
+	//      ⚠ 升級 vendor 函式庫時，務必改檔名或在引用網址加版本 query（如 ?v=2），
+	//        否則 immutable 會讓瀏覽器持續供應舊檔。
+	//   2. 自家 HTML/JS/CSS（/、index.html、其餘 /static/*）：no-cache，瀏覽器仍可快取，
+	//      但每次使用前都會向伺服器驗證（未變更回 304，很快），改版後立即生效、無需手動強制重整。
 	r.Use(func(c *gin.Context) {
 		p := c.Request.URL.Path
-		if p == "/" || p == "/index.html" || strings.HasPrefix(p, "/static/") {
+		switch {
+		case strings.HasPrefix(p, "/static/vendor/"):
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		case p == "/" || p == "/index.html" || strings.HasPrefix(p, "/static/"):
 			c.Header("Cache-Control", "no-cache")
 		}
 		c.Next()

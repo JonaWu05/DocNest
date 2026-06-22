@@ -5,6 +5,9 @@ markdownEditor
 # 環境變數（含密鑰、密碼 hash，不可進版控）；.env.example 可保留作為範本
 .env
 
+# 權限分組設定（含成員身分鍵，屬部署資料）；permissions.example.json 為範本可保留
+permissions.json
+
 # 作業系統 / 編輯器雜項
 .DS_Store
 Thumbs.db

@@ -102,7 +102,7 @@ func loginHandler(c *gin.Context) {
 		return
 	}
 
-	token, err := signJWT(req.Username, "local")
+	token, err := signJWT(req.Username, "local", "local:"+req.Username)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "簽發 token 失敗"})
 		return
@@ -120,10 +120,14 @@ func loginHandler(c *gin.Context) {
 // meHandler 處理 GET /api/me：回傳目前登入者的 username 與 login_type
 // （資料由 AuthMiddleware 驗證 token 後存入 gin.Context）。
 func meHandler(c *gin.Context) {
+	subject := subjectOf(c)
 	c.JSON(http.StatusOK, gin.H{
 		"username":    c.GetString("username"),
 		"login_type":  c.GetString("login_type"),
 		"default_doc": auth.defaultDoc, // 前端據此決定登入後自動開啟哪份文件作為首頁
+		// 權限摘要：前端據此顯示歡迎頁、隱藏無權限的操作（伺服器端仍為真正防線）
+		"has_access":     hasAnyRead(subject),                 // 是否在任何地方有讀取權；否則顯示歡迎頁
+		"can_write_root": canAccess(subject, "", accessWrite), // 是否可在根目錄新增（決定側欄新增鈕顯示）
 	})
 }
 
@@ -219,8 +223,9 @@ func discordCallbackHandler(c *gin.Context) {
 		return
 	}
 
-	// 5) 以 Discord username 簽發 JWT，導回前端並在 URL fragment 帶上 token
-	jwtStr, err := signJWT(du.Username, "discord")
+	// 5) 簽發 JWT：顯示名稱用 Discord username，但授權身分鍵用穩定且唯一的 Discord ID
+	//    （username 可被使用者更改、也可能與本地帳號撞名，不適合作為權限對應 key）。
+	jwtStr, err := signJWT(du.Username, "discord", "discord:"+du.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "簽發 token 失敗"})
 		return

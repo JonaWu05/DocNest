@@ -23,6 +23,7 @@ type AssetItem struct {
 // 回傳清單供前端「從已上傳的附件中挑選」重複使用。
 func listAssetsHandler(c *gin.Context) {
 	items := []AssetItem{}
+	subject := subjectOf(c)
 	assetsRoot := filepath.Join(docRoot, "assets")
 
 	// assets 目錄存在才掃描（尚未上傳任何附件時即為空清單）
@@ -40,6 +41,10 @@ func listAssetsHandler(c *gin.Context) {
 			}
 			rel, err := filepath.Rel(docRoot, p)
 			if err != nil {
+				return nil
+			}
+			// 權限過濾：只列出使用者有讀取權的附件
+			if !canAccess(subject, filepath.ToSlash(rel), accessRead) {
 				return nil
 			}
 			var size int64
@@ -67,7 +72,12 @@ func listAssetsHandler(c *gin.Context) {
 // listAssetFoldersHandler 處理 GET /api/asset-folders：列出 assets 樹底下的所有資料夾，
 // 供前端的「上傳目的地」下拉選單與新增資料夾使用（不會列出文件資料夾如 notes）。
 func listAssetFoldersHandler(c *gin.Context) {
-	folders := []string{"assets"} // 至少提供根 assets 作為預設目的地
+	subject := subjectOf(c)
+	folders := []string{}
+	// 根 assets 至少在使用者可寫時提供為預設目的地
+	if canAccess(subject, "assets", accessWrite) {
+		folders = append(folders, "assets")
+	}
 	assetsRoot := filepath.Join(docRoot, "assets")
 
 	if info, err := os.Stat(assetsRoot); err == nil && info.IsDir() {
@@ -84,8 +94,12 @@ func listAssetFoldersHandler(c *gin.Context) {
 			if strings.HasPrefix(d.Name(), ".") {
 				return filepath.SkipDir
 			}
+			// 只列出使用者有寫入權的資料夾（作為上傳目的地）
 			if rel, err := filepath.Rel(docRoot, p); err == nil {
-				folders = append(folders, filepath.ToSlash(rel))
+				slash := filepath.ToSlash(rel)
+				if canAccess(subject, slash, accessWrite) {
+					folders = append(folders, slash)
+				}
 			}
 			return nil
 		})

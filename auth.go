@@ -34,10 +34,13 @@ var discordEndpoint = oauth2.Endpoint{
 	TokenURL: "https://discord.com/api/oauth2/token",
 }
 
-// Claims 為 JWT 的內容，格式與規格一致：username、login_type，加上標準的 exp/iat。
+// Claims 為 JWT 的內容：username（顯示名稱）、login_type，加上標準的 exp/iat。
+// Subject 為授權用的穩定身分鍵（local:<帳號> 或 discord:<ID>）；與顯示用的 Username 分離，
+// 因為 Discord 顯示名稱可被使用者更改、也可能與本地帳號撞名，不適合當權限對應的 key。
 type Claims struct {
 	Username  string `json:"username"`
 	LoginType string `json:"login_type"` // "local" 或 "discord"
+	Subject   string `json:"sub"`        // 穩定身分鍵，供權限分組比對
 	jwt.RegisteredClaims
 }
 
@@ -117,12 +120,13 @@ func parseUsers(raw string) map[string]string {
 	return users
 }
 
-// signJWT 以指定的使用者名稱與登入方式簽發一組 HS256 JWT。
-func signJWT(username, loginType string) (string, error) {
+// signJWT 以指定的顯示名稱、登入方式與穩定身分鍵簽發一組 HS256 JWT。
+func signJWT(username, loginType, subject string) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		Username:  username,
 		LoginType: loginType,
+		Subject:   subject,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(auth.jwtExpire)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -177,6 +181,13 @@ func AuthMiddleware() gin.HandlerFunc {
 		}
 		c.Set("username", claims.Username)
 		c.Set("login_type", claims.LoginType)
+		// 穩定身分鍵：新 token 直接帶 Subject；舊 token（升級前簽發、無 sub）退而由
+		// login_type:username 推導，確保升級期間的本地帳號權限仍可正確比對。
+		subject := claims.Subject
+		if subject == "" {
+			subject = claims.LoginType + ":" + claims.Username
+		}
+		c.Set("subject", subject)
 		c.Next()
 	}
 }

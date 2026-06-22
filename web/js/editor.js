@@ -12,6 +12,9 @@ import { uploadFile } from "./api.js";
 import { authFetch, ensureOk } from "./auth.js";
 import { relativeFromDocDir, debounce } from "./util.js";
 import { sendPresence } from "./ws.js";
+import { loadEasyMDE } from "./vendor.js";
+import { openAssetModal } from "./assets.js";
+import { openDocPicker } from "./docPicker.js";
 
 // 打字時的預覽 / 目錄更新採 debounce：連續輸入停止約 150ms 後才重算一次，
 // 避免每個按鍵都全量 marked.parse + 重建 DOM 造成卡頓。
@@ -22,8 +25,10 @@ const debouncedPreviewAndTOC = debounce(() => {
 }, 150);
 
 // ===== 確保 EasyMDE 已建立 =====
-export function ensureEditor() {
+// EasyMDE 改為延遲載入（見 vendor.js），故本函式為 async：呼叫端需 await 後才可用 state.easyMDE。
+export async function ensureEditor() {
   if (state.easyMDE) return;
+  await loadEasyMDE();
   state.easyMDE = new EasyMDE({
     element: document.getElementById("editor"),
     autoDownloadFontAwesome: false, // FontAwesome 由 index.html 以本地 /static/vendor 載入，不從 CDN 抓
@@ -31,6 +36,7 @@ export function ensureEditor() {
     spellChecker: false,
     status: ["lines", "words"],
     placeholder: "在此輸入 Markdown…（可直接拖放或貼上圖片）",
+    lineNumbers: true, // 編輯區左側顯示行號（如 VSCode）
     // 啟用 EasyMDE 內建的圖片上傳（支援拖放與貼上），改用我們的後端
     uploadImage: true,
     imageUploadFunction: function (file, onSuccess, onError) {
@@ -39,6 +45,28 @@ export function ensureEditor() {
         .then(data => onSuccess(relativeFromDocDir(data.path)))
         .catch(err => onError(err.message));
     },
+    // 自訂工具列：沿用 EasyMDE 預設按鈕，但「圖片」鈕改為開啟附件庫，
+    // 並新增「插入分頁連結」鈕（挑選工作區內其他文件，插入可站內轉跳的連結）。
+    toolbar: [
+      "bold", "italic", "heading", "|",
+      "quote", "unordered-list", "ordered-list", "|",
+      "link",
+      {
+        name: "image",
+        action: () => openAssetModal(),
+        className: "fa fa-picture-o",
+        title: "插入圖片 / 附件",
+      },
+      {
+        name: "doc-link",
+        action: () => openDocPicker(),
+        className: "fa fa-file-text-o",
+        title: "插入分頁連結（連到其他文件，點擊可站內轉跳）",
+      },
+      "|",
+      "preview", "side-by-side", "fullscreen", "|",
+      "guide",
+    ],
   });
   // 編輯器內容變更：更新真實來源、標記未儲存、即時刷新分割預覽、排程自動儲存
   state.easyMDE.codemirror.on("change", () => {
@@ -61,7 +89,8 @@ export function setEditorValue(text) {
 }
 
 // ===== 套用模式（preview / edit / split）=====
-export function applyMode(mode) {
+// edit / split 需先 await ensureEditor()（EasyMDE 延遲載入），故本函式為 async。
+export async function applyMode(mode) {
   if (!state.currentPath) return;
   if (state.currentMode !== "preview" && state.easyMDE) state.currentContent = state.easyMDE.value();
 
@@ -76,14 +105,16 @@ export function applyMode(mode) {
   } else if (mode === "edit") {
     editorPane.classList.remove("hidden");
     previewPane.classList.add("hidden");
-    ensureEditor();
+    await ensureEditor();
     setEditorValue(state.currentContent);
+    state.easyMDE.codemirror.setOption("readOnly", !state.currentWritable); // 無寫入權則編輯器唯讀
     setTimeout(() => state.easyMDE.codemirror.refresh(), 0);
   } else { // split
     editorPane.classList.remove("hidden");
     previewPane.classList.remove("hidden");
-    ensureEditor();
+    await ensureEditor();
     setEditorValue(state.currentContent);
+    state.easyMDE.codemirror.setOption("readOnly", !state.currentWritable); // 無寫入權則編輯器唯讀
     renderPreview();
     setTimeout(() => state.easyMDE.codemirror.refresh(), 0);
   }
@@ -103,6 +134,11 @@ export function scheduleAutosave() {
 // force=true 時略過樂觀鎖檢查（使用者在衝突提示中明確選擇覆蓋）。
 export async function saveFile(silent, force) {
   if (!state.currentPath) return;
+  // 唯讀檔案不送出儲存（伺服器端仍會擋；這裡提前攔截避免無謂的 403 與閃爍）
+  if (!state.currentWritable) {
+    if (!silent) showToast("此檔案為唯讀，您沒有編輯權限", "info");
+    return;
+  }
   if (state.currentMode !== "preview" && state.easyMDE) state.currentContent = state.easyMDE.value();
 
   saveBtn.disabled = true;
@@ -129,9 +165,9 @@ export async function saveFile(silent, force) {
 }
 
 // ===== 將 Markdown 片段插入到編輯器游標處（必要時先切到編輯模式）=====
-export function insertIntoEditor(md) {
-  if (state.currentMode === "preview") applyMode("edit");
-  ensureEditor();
+export async function insertIntoEditor(md) {
+  if (state.currentMode === "preview") await applyMode("edit");
+  await ensureEditor();
   state.easyMDE.codemirror.replaceSelection(md + "\n");
 }
 
@@ -156,10 +192,14 @@ export async function openFile(path, labelEl) {
     document.querySelectorAll(".tree-label.active").forEach(el => el.classList.remove("active"));
     if (labelEl) labelEl.classList.add("active");
 
+    // 此檔是否可寫：由檔案樹節點標記（找不到標記時預設可寫，伺服器端仍會擋無權限的儲存）
+    state.currentWritable = !labelEl || labelEl.dataset.writable !== "";
+
     fileNameEl.textContent = path;
     modeButtons.forEach(b => b.disabled = false);
-    saveBtn.disabled = false;
-    attachBtn.disabled = false;
+    // 唯讀檔案：停用儲存與附件上傳（編輯器本身也會設為唯讀，見 applyMode）
+    saveBtn.disabled = !state.currentWritable;
+    attachBtn.disabled = !state.currentWritable;
     exportBtn.disabled = false;
 
     applyMode("preview");
@@ -177,6 +217,7 @@ export function resetWorkspace() {
   state.currentPath = null;
   state.currentContent = "";
   state.currentVersion = null;
+  state.currentWritable = true;
   setDirty(false);
   fileNameEl.textContent = "尚未開啟檔案";
   modeButtons.forEach(b => b.disabled = true);

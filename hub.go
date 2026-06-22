@@ -51,7 +51,8 @@ type fileUpdatedPayload struct {
 type Client struct {
 	conn        *websocket.Conn
 	send        chan []byte // 緩衝 channel，writePump 由此取出訊息寫到連線
-	username    string      // 由 JWT 取出，不信任前端傳來的身份
+	username    string      // 由 JWT 取出，不信任前端傳來的身份（顯示用）
+	subject     string      // 穩定身分鍵（local:/discord:），presence 去重用
 	currentFile string      // 目前查看的檔案路徑（可為空）
 	isEditing   bool        // 是否處於編輯模式
 }
@@ -136,15 +137,41 @@ func (h *Hub) deliver(msg []byte) {
 
 // broadcastPresence 蒐集目前所有連線的狀態，組成 presence_update 廣播給所有人。
 // 注意：本函式只在 hub goroutine 內被呼叫，故可安全讀取 clients 與 Client 欄位。
+//
+// 以穩定身分鍵（subject）去重：同一使用者開多個分頁／多條連線時只算一人，
+// 避免 presence 清單出現重複的自己（同一人多連線是正常情況，例如 OAuth 整頁跳轉的瞬間重疊）。
 func (h *Hub) broadcastPresence() {
-	users := make([]PresenceUser, 0, len(h.clients))
+	bySubject := make(map[string]*PresenceUser, len(h.clients))
+	order := make([]string, 0, len(h.clients)) // 保留首見順序，輸出較穩定
+
 	for c := range h.clients {
-		users = append(users, PresenceUser{
+		key := c.subject
+		if key == "" {
+			key = c.username // 後備：舊連線未帶 subject 時以 username 當鍵
+		}
+		if u, ok := bySubject[key]; ok {
+			// 合併同一人多條連線的狀態：任一條在編輯即視為編輯中，並採用有開檔的那條的檔案路徑
+			if c.isEditing {
+				u.IsEditing = true
+				u.CurrentFile = c.currentFile
+			} else if u.CurrentFile == "" {
+				u.CurrentFile = c.currentFile
+			}
+			continue
+		}
+		bySubject[key] = &PresenceUser{
 			Username:    c.username,
 			CurrentFile: c.currentFile,
 			IsEditing:   c.isEditing,
-		})
+		}
+		order = append(order, key)
 	}
+
+	users := make([]PresenceUser, 0, len(order))
+	for _, k := range order {
+		users = append(users, *bySubject[k])
+	}
+
 	msg, err := json.Marshal(WSMessage{Type: "presence_update", Payload: presencePayload{Users: users}})
 	if err != nil {
 		return
@@ -198,11 +225,17 @@ func serveWs(c *gin.Context) {
 		return
 	}
 
-	// username 一律取自 JWT，不採信前端
+	// username / subject 一律取自 JWT，不採信前端。subject 為 presence 去重的穩定身分鍵；
+	// 舊 token 無 sub 時退而以 login_type:username 推導（與 AuthMiddleware 一致）。
+	subject := claims.Subject
+	if subject == "" {
+		subject = claims.LoginType + ":" + claims.Username
+	}
 	client := &Client{
 		conn:     conn,
 		send:     make(chan []byte, sendBuffer),
 		username: claims.Username,
+		subject:  subject,
 	}
 	hub.register <- client
 

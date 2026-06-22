@@ -12,6 +12,7 @@ type FileNode struct {
 	Name     string      `json:"name"`               // 節點名稱（檔名或資料夾名）
 	Path     string      `json:"path"`               // 相對於 DOC_ROOT 的路徑（使用 / 分隔）
 	IsDir    bool        `json:"isDir"`              // 是否為資料夾
+	Writable bool        `json:"writable"`           // 目前使用者是否可寫（供前端隱藏編輯/刪除操作；由 filterTree 標記）
 	Children []*FileNode `json:"children,omitempty"` // 子節點（僅資料夾有）
 }
 

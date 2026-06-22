@@ -35,8 +35,10 @@ func listFilesHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "無法讀取文件目錄：" + err.Error()})
 		return
 	}
-	// 直接回傳根目錄底下的子節點清單
-	c.JSON(http.StatusOK, gin.H{"files": tree.Children})
+	// 依目前使用者的讀取權過濾：無權限的節點完全不回傳（前端因而看不到），
+	// 並順帶標記各節點是否可寫，供前端隱藏編輯/刪除操作。
+	children := filterTree(tree.Children, subjectOf(c))
+	c.JSON(http.StatusOK, gin.H{"files": children})
 }
 
 // readFileHandler 處理 GET /api/file?path=xxx：讀取檔案內容並以純文字回傳
@@ -57,6 +59,11 @@ func readFileHandler(c *gin.Context) {
 	// 僅允許讀取 .md / .txt 檔案
 	if !isAllowedFile(absPath) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "不支援的檔案類型"})
+		return
+	}
+
+	// 權限檢查：需對此路徑具備讀取權
+	if !requireAccess(c, relOf(absPath), accessRead) {
 		return
 	}
 
@@ -95,6 +102,11 @@ func writeFileHandler(c *gin.Context) {
 	// 僅允許寫入 .md / .txt 檔案
 	if !isAllowedFile(absPath) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "不支援的檔案類型"})
+		return
+	}
+
+	// 權限檢查：需對此路徑具備寫入權
+	if !requireAccess(c, relOf(absPath), accessWrite) {
 		return
 	}
 
@@ -164,6 +176,11 @@ func deleteFileHandler(c *gin.Context) {
 		return
 	}
 
+	// 權限檢查：需對此路徑具備寫入權（刪除歸類為修改）
+	if !requireAccess(c, relOf(absPath), accessWrite) {
+		return
+	}
+
 	// 確認目標存在
 	info, err := os.Stat(absPath)
 	if err != nil {
@@ -217,6 +234,11 @@ func createHandler(c *gin.Context) {
 		return
 	}
 
+	// 權限檢查：需對欲建立的位置具備寫入權
+	if !requireAccess(c, relOf(absPath), accessWrite) {
+		return
+	}
+
 	// 目標已存在則拒絕，避免覆蓋既有資料
 	if _, err := os.Stat(absPath); err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "同名的檔案或資料夾已存在"})
@@ -267,6 +289,11 @@ func renameHandler(c *gin.Context) {
 	newAbs, err := safeResolve(newParam)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非法的目標路徑"})
+		return
+	}
+
+	// 權限檢查：改名/移動同時影響來源與目的地，兩端都需具備寫入權
+	if !requireAccess(c, relOf(oldAbs), accessWrite) || !requireAccess(c, relOf(newAbs), accessWrite) {
 		return
 	}
 
@@ -327,6 +354,11 @@ func rawFileHandler(c *gin.Context) {
 	absPath, err := safeResolve(pathParam)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
+		return
+	}
+
+	// 權限檢查：原始檔案（圖片/附件）服務同樣需讀取權，避免繞過樹過濾直接讀取
+	if !requireAccess(c, relOf(absPath), accessRead) {
 		return
 	}
 

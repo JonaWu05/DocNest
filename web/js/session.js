@@ -42,6 +42,9 @@ async function enterAppWithMe() {
     if (!res.ok) throw new Error("驗證失敗");
     const me = await res.json();
     setUser(me.username, me.login_type);
+    // 權限摘要（未啟用權限分組或舊後端時欄位可能不存在，預設給最寬鬆值以維持相容）
+    state.hasAccess = me.has_access !== false;
+    state.canWriteRoot = me.can_write_root !== false;
     showApp();
     onEnterApp(me.default_doc); // 把首頁文件設定一併交給主介面初始化
   } catch (e) {

@@ -9,16 +9,16 @@
   <style>{{ .LoginBg }}</style>{{ end }}
 
   <!-- 第三方相依一律由後端 /static/vendor 本地提供（pinned 版本），不依賴外部 CDN -->
-  <!-- FontAwesome 4.7（EasyMDE 工具列圖示；已關閉 EasyMDE 的 autoDownloadFontAwesome）-->
-  <link rel="stylesheet" href="/static/vendor/fontawesome/css/font-awesome.min.css">
-  <!-- EasyMDE 編輯器樣式 -->
-  <link rel="stylesheet" href="/static/vendor/easymde.min.css">
-  <!-- EasyMDE 編輯器程式 -->
-  <script src="/static/vendor/easymde.min.js"></script>
-  <!-- marked.js：Markdown 轉 HTML -->
-  <script src="/static/vendor/marked.min.js"></script>
+  <!-- FontAwesome 4.7（EasyMDE 工具列圖示）：以 preload 非阻擋方式載入，下載完才升為 stylesheet，
+       避免登入頁僅用 1 個圖示卻被整份 CSS 與字型阻擋首屏渲染 -->
+  <link rel="preload" as="style" href="/static/vendor/fontawesome/css/font-awesome.min.css"
+        onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="/static/vendor/fontawesome/css/font-awesome.min.css"></noscript>
+  <!-- EasyMDE（編輯器，約 326KB）改由 js/vendor.js 在進入編輯模式時才動態載入，不放入首屏關鍵路徑 -->
+  <!-- marked.js：Markdown 轉 HTML（預覽才用得到，defer 不阻擋渲染）-->
+  <script defer src="/static/vendor/marked.min.js"></script>
   <!-- DOMPurify：渲染前消毒 HTML，防止 Markdown 內嵌指令碼造成 XSS（提供全域 window.DOMPurify）-->
-  <script src="/static/vendor/purify.min.js"></script>
+  <script defer src="/static/vendor/purify.min.js"></script>
 
   <!-- 應用程式樣式（由後端 /static 提供）-->
   <link rel="stylesheet" href="/static/styles.css">
@@ -136,6 +136,20 @@
       </div>
       <div class="modal-subtoolbar"><span id="asset-hint"></span></div>
       <div class="asset-grid" id="asset-grid"></div>
+    </div>
+  </div>
+
+  <!-- 分頁連結對話框：挑選工作區內其他文件，插入可站內轉跳的連結 -->
+  <div id="doc-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span>插入分頁連結</span>
+        <button class="icon-btn" id="doc-close" title="關閉"><i class="fa fa-times"></i></button>
+      </div>
+      <div class="modal-toolbar">
+        <input type="text" id="doc-search" class="doc-search" placeholder="搜尋文件名稱或路徑…">
+      </div>
+      <div class="doc-list" id="doc-list"></div>
     </div>
   </div>
 
