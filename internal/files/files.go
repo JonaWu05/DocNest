@@ -1,4 +1,5 @@
-package main
+// Package files 提供文件的 CRUD 與原始檔案（圖片/附件）服務，並依權限過濾檔案樹。
+package files
 
 import (
 	"crypto/sha256"
@@ -12,62 +13,92 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"markdownEditor/internal/authz"
+	"markdownEditor/internal/hub"
+	"markdownEditor/internal/store"
 )
 
 // tsPrefix 比對上傳檔名的「時間戳記_」前綴（對應前端 assetDisplayName 的清理規則）
 var tsPrefix = regexp.MustCompile(`^\d+_`)
 
-// fileVersion 由內容算出短雜湊，作為樂觀鎖的版本識別。
-// 用內容雜湊而非 mtime：不受作業系統時間解析度影響，相同內容必得相同版本。
-func fileVersion(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:8]) // 16 個十六進位字元，足以區辨版本
-}
-
 // maxWriteSize 為單次寫入檔案的 request body 上限（10 MB）。
-// 避免已登入者送出超大 body 經 io.ReadAll 一次讀進記憶體而撐爆服務。
 const maxWriteSize = 10 << 20
 
-// listFilesHandler 處理 GET /api/files：遞迴掃描 DOC_ROOT，建立並回傳樹狀結構
-func listFilesHandler(c *gin.Context) {
-	tree, err := buildTree(docRoot, "")
+// Files 綁定檔案儲存、授權判斷與 WebSocket Hub（儲存後廣播通知）。
+type Files struct {
+	store *store.Store
+	az    *authz.Authz
+	hub   *hub.Hub
+}
+
+// New 建立 Files handler 集合。
+func New(st *store.Store, az *authz.Authz, h *hub.Hub) *Files {
+	return &Files{store: st, az: az, hub: h}
+}
+
+// fileVersion 由內容算出短雜湊，作為樂觀鎖的版本識別。
+func fileVersion(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
+}
+
+// filterTree 依 subject 的讀取權過濾檔案樹：
+//   - 檔案：可讀才保留
+//   - 資料夾：自身可讀、或含有可讀後代時保留（讓使用者能逐層導覽到可讀檔案）
+//
+// 同時標記每個保留節點的 Writable，供前端隱藏無權限的編輯／刪除操作。
+func (f *Files) filterTree(nodes []*store.FileNode, subject string) []*store.FileNode {
+	out := []*store.FileNode{}
+	for _, n := range nodes {
+		if n.IsDir {
+			n.Children = f.filterTree(n.Children, subject)
+			if len(n.Children) > 0 || f.az.Can(subject, n.Path, authz.AccessRead) {
+				n.Writable = f.az.Can(subject, n.Path, authz.AccessWrite)
+				out = append(out, n)
+			}
+		} else if f.az.Can(subject, n.Path, authz.AccessRead) {
+			n.Writable = f.az.Can(subject, n.Path, authz.AccessWrite)
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// ListFiles 處理 GET /api/files：建立檔案樹，依使用者讀取權過濾後回傳。
+func (f *Files) ListFiles(c *gin.Context) {
+	tree, err := f.store.BuildTree()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "無法讀取文件目錄：" + err.Error()})
 		return
 	}
-	// 依目前使用者的讀取權過濾：無權限的節點完全不回傳（前端因而看不到），
-	// 並順帶標記各節點是否可寫，供前端隱藏編輯/刪除操作。
-	children := filterTree(tree.Children, subjectOf(c))
+	children := f.filterTree(tree.Children, authz.SubjectOf(c))
 	c.JSON(http.StatusOK, gin.H{"files": children})
 }
 
-// readFileHandler 處理 GET /api/file?path=xxx：讀取檔案內容並以純文字回傳
-func readFileHandler(c *gin.Context) {
+// ReadFile 處理 GET /api/file?path=xxx：讀取檔案內容並以純文字回傳。
+func (f *Files) ReadFile(c *gin.Context) {
 	pathParam := c.Query("path")
 	if pathParam == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 參數"})
 		return
 	}
 
-	// 路徑安全檢查
-	absPath, err := safeResolve(pathParam)
+	absPath, err := f.store.SafeResolve(pathParam)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
 		return
 	}
 
-	// 僅允許讀取 .md / .txt 檔案
-	if !isAllowedFile(absPath) {
+	if !store.IsAllowedFile(absPath) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "不支援的檔案類型"})
 		return
 	}
 
-	// 權限檢查：需對此路徑具備讀取權
-	if !requireAccess(c, relOf(absPath), accessRead) {
+	if !f.az.RequireAccess(c, f.store.RelOf(absPath), authz.AccessRead) {
 		return
 	}
 
-	// 讀取檔案內容
 	content, err := os.ReadFile(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -78,47 +109,41 @@ func readFileHandler(c *gin.Context) {
 		return
 	}
 
-	// 帶上版本識別，供前端做樂觀鎖（儲存時回傳此版本，後端比對是否被他人覆蓋過）
+	// 帶上版本識別，供前端做樂觀鎖
 	c.Header("X-File-Version", fileVersion(content))
-	// 以純文字（UTF-8）回傳內容
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", content)
 }
 
-// writeFileHandler 處理 POST /api/file?path=xxx：將 request body 寫入指定檔案
-func writeFileHandler(c *gin.Context) {
+// WriteFile 處理 POST /api/file?path=xxx：將 request body 寫入指定檔案。
+func (f *Files) WriteFile(c *gin.Context) {
 	pathParam := c.Query("path")
 	if pathParam == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 參數"})
 		return
 	}
 
-	// 路徑安全檢查
-	absPath, err := safeResolve(pathParam)
+	absPath, err := f.store.SafeResolve(pathParam)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
 		return
 	}
 
-	// 僅允許寫入 .md / .txt 檔案
-	if !isAllowedFile(absPath) {
+	if !store.IsAllowedFile(absPath) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "不支援的檔案類型"})
 		return
 	}
 
-	// 權限檢查：需對此路徑具備寫入權
-	if !requireAccess(c, relOf(absPath), accessWrite) {
+	if !f.az.RequireAccess(c, f.store.RelOf(absPath), authz.AccessWrite) {
 		return
 	}
 
-	// 讀取 request body 作為檔案內容（限制大小，避免超大 body 撐爆記憶體）
 	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxWriteSize))
 	if err != nil {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "內容過大或讀取失敗（單檔上限 10 MB）"})
 		return
 	}
 
-	// 樂觀鎖：用戶端帶了基準版本（X-File-Version）且與磁碟現況不符，代表編輯期間
-	// 已被他人儲存過，直接覆蓋會吃掉對方的變更 → 回 409，交由前端讓使用者決定。
+	// 樂觀鎖：用戶端帶了基準版本且與磁碟現況不符 → 回 409，交由前端讓使用者決定。
 	// force=1 表示使用者明確選擇覆蓋，略過檢查。
 	if base := c.GetHeader("X-File-Version"); base != "" && c.Query("force") != "1" {
 		if existing, rerr := os.ReadFile(absPath); rerr == nil {
@@ -132,56 +157,47 @@ func writeFileHandler(c *gin.Context) {
 		}
 	}
 
-	// 確保目標檔案所在的資料夾存在（允許寫入新建子目錄的檔案）
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "建立目錄失敗：" + err.Error()})
 		return
 	}
 
-	// 寫入檔案（覆寫既有內容）
 	if err := os.WriteFile(absPath, body, 0o644); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "寫入檔案失敗：" + err.Error()})
 		return
 	}
 
-	// 廣播 file_updated 通知給所有 WebSocket 連線（僅 path + savedBy，不含內容）。
-	// path 用前端送來的相對路徑（統一為 / 分隔），與前端比對 currentPath 一致；
-	// savedBy 取自 JWT（經 AuthMiddleware 存入 context），不採信前端身份。
+	// 廣播 file_updated 通知（僅 path + savedBy，不含內容）。savedBy 取自 JWT，不採信前端。
 	relPath := strings.ReplaceAll(pathParam, "\\", "/")
-	broadcastFileUpdated(relPath, c.GetString("username"))
+	f.hub.BroadcastFileUpdated(relPath, c.GetString("username"))
 
-	// 回傳寫入後的新版本，前端據此更新基準（避免自己存完又被自己的廣播判定成衝突）
 	c.Header("X-File-Version", fileVersion(body))
 	c.JSON(http.StatusOK, gin.H{"message": "儲存成功"})
 }
 
-// deleteFileHandler 處理 DELETE /api/file?path=xxx：刪除檔案或資料夾
-func deleteFileHandler(c *gin.Context) {
+// DeleteFile 處理 DELETE /api/file?path=xxx：刪除檔案或資料夾。
+func (f *Files) DeleteFile(c *gin.Context) {
 	pathParam := c.Query("path")
 	if pathParam == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 參數"})
 		return
 	}
 
-	// 路徑安全檢查
-	absPath, err := safeResolve(pathParam)
+	absPath, err := f.store.SafeResolve(pathParam)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
 		return
 	}
 
-	// 不允許刪除根目錄本身
-	if absPath == docRoot {
+	if absPath == f.store.Root {
 		c.JSON(http.StatusForbidden, gin.H{"error": "不可刪除文件根目錄"})
 		return
 	}
 
-	// 權限檢查：需對此路徑具備寫入權（刪除歸類為修改）
-	if !requireAccess(c, relOf(absPath), accessWrite) {
+	if !f.az.RequireAccess(c, f.store.RelOf(absPath), authz.AccessWrite) {
 		return
 	}
 
-	// 確認目標存在
 	info, err := os.Stat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -192,7 +208,6 @@ func deleteFileHandler(c *gin.Context) {
 		return
 	}
 
-	// 資料夾用 RemoveAll（含底下內容），檔案則限制副檔名後刪除
 	if info.IsDir() {
 		if err := os.RemoveAll(absPath); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "刪除資料夾失敗：" + err.Error()})
@@ -201,7 +216,7 @@ func deleteFileHandler(c *gin.Context) {
 	} else {
 		// 允許刪除文件（.md/.txt）以及已上傳的圖片/附件
 		ext := strings.ToLower(filepath.Ext(absPath))
-		if !isAllowedFile(absPath) && !isAllowedUpload(ext) {
+		if !store.IsAllowedFile(absPath) && !store.IsAllowedUpload(ext) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "不支援的檔案類型"})
 			return
 		}
@@ -214,10 +229,10 @@ func deleteFileHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "刪除成功"})
 }
 
-// createHandler 處理 POST /api/create?path=xxx&type=file|dir：新增檔案或資料夾
-func createHandler(c *gin.Context) {
+// Create 處理 POST /api/create?path=xxx&type=file|dir：新增檔案或資料夾。
+func (f *Files) Create(c *gin.Context) {
 	pathParam := c.Query("path")
-	itemType := c.Query("type") // "file" 或 "dir"
+	itemType := c.Query("type")
 	if pathParam == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 參數"})
 		return
@@ -227,33 +242,28 @@ func createHandler(c *gin.Context) {
 		return
 	}
 
-	// 路徑安全檢查
-	absPath, err := safeResolve(pathParam)
+	absPath, err := f.store.SafeResolve(pathParam)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
 		return
 	}
 
-	// 權限檢查：需對欲建立的位置具備寫入權
-	if !requireAccess(c, relOf(absPath), accessWrite) {
+	if !f.az.RequireAccess(c, f.store.RelOf(absPath), authz.AccessWrite) {
 		return
 	}
 
-	// 目標已存在則拒絕，避免覆蓋既有資料
 	if _, err := os.Stat(absPath); err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "同名的檔案或資料夾已存在"})
 		return
 	}
 
 	if itemType == "dir" {
-		// 建立資料夾
 		if err := os.MkdirAll(absPath, 0o755); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "建立資料夾失敗：" + err.Error()})
 			return
 		}
 	} else {
-		// 建立檔案：限制副檔名，並確保上層目錄存在
-		if !isAllowedFile(absPath) {
+		if !store.IsAllowedFile(absPath) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "僅能建立 .md 或 .txt 檔案"})
 			return
 		}
@@ -261,7 +271,6 @@ func createHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "建立目錄失敗：" + err.Error()})
 			return
 		}
-		// 以空內容建立新檔
 		if err := os.WriteFile(absPath, []byte{}, 0o644); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "建立檔案失敗：" + err.Error()})
 			return
@@ -271,8 +280,8 @@ func createHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "建立成功"})
 }
 
-// renameHandler 處理 POST /api/rename?path=old&newPath=new：重新命名或移動檔案/資料夾
-func renameHandler(c *gin.Context) {
+// Rename 處理 POST /api/rename?path=old&newPath=new：重新命名或移動檔案/資料夾。
+func (f *Files) Rename(c *gin.Context) {
 	oldParam := c.Query("path")
 	newParam := c.Query("newPath")
 	if oldParam == "" || newParam == "" {
@@ -280,30 +289,27 @@ func renameHandler(c *gin.Context) {
 		return
 	}
 
-	// 來源與目標路徑都要做安全檢查
-	oldAbs, err := safeResolve(oldParam)
+	oldAbs, err := f.store.SafeResolve(oldParam)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非法的來源路徑"})
 		return
 	}
-	newAbs, err := safeResolve(newParam)
+	newAbs, err := f.store.SafeResolve(newParam)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非法的目標路徑"})
 		return
 	}
 
-	// 權限檢查：改名/移動同時影響來源與目的地，兩端都需具備寫入權
-	if !requireAccess(c, relOf(oldAbs), accessWrite) || !requireAccess(c, relOf(newAbs), accessWrite) {
+	// 改名/移動同時影響來源與目的地，兩端都需具備寫入權
+	if !f.az.RequireAccess(c, f.store.RelOf(oldAbs), authz.AccessWrite) || !f.az.RequireAccess(c, f.store.RelOf(newAbs), authz.AccessWrite) {
 		return
 	}
 
-	// 不允許移動根目錄本身
-	if oldAbs == docRoot {
+	if oldAbs == f.store.Root {
 		c.JSON(http.StatusForbidden, gin.H{"error": "不可移動文件根目錄"})
 		return
 	}
 
-	// 確認來源存在
 	info, err := os.Stat(oldAbs)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -314,25 +320,21 @@ func renameHandler(c *gin.Context) {
 		return
 	}
 
-	// 若來源是檔案，目標也必須是允許的副檔名
-	if !info.IsDir() && !isAllowedFile(newAbs) {
+	if !info.IsDir() && !store.IsAllowedFile(newAbs) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "目標檔名必須為 .md 或 .txt"})
 		return
 	}
 
-	// 目標已存在則拒絕
 	if _, err := os.Stat(newAbs); err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "目標已存在"})
 		return
 	}
 
-	// 確保目標上層目錄存在
 	if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "建立目錄失敗：" + err.Error()})
 		return
 	}
 
-	// 執行更名 / 移動
 	if err := os.Rename(oldAbs, newAbs); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "重新命名失敗：" + err.Error()})
 		return
@@ -341,24 +343,22 @@ func renameHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "重新命名成功"})
 }
 
-// rawFileHandler 處理 GET /api/raw?path=xxx：直接提供原始檔案內容（供圖片/附件顯示與下載）。
-// 與 readFileHandler 不同，這裡不限制副檔名，但仍受 DOC_ROOT 路徑安全檢查保護。
-func rawFileHandler(c *gin.Context) {
+// Raw 處理 GET /api/raw?path=xxx：直接提供原始檔案內容（供圖片/附件顯示與下載）。
+func (f *Files) Raw(c *gin.Context) {
 	pathParam := c.Query("path")
 	if pathParam == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 參數"})
 		return
 	}
 
-	// 路徑安全檢查，確保只能存取 DOC_ROOT 底下的檔案
-	absPath, err := safeResolve(pathParam)
+	absPath, err := f.store.SafeResolve(pathParam)
 	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
 		return
 	}
 
-	// 權限檢查：原始檔案（圖片/附件）服務同樣需讀取權，避免繞過樹過濾直接讀取
-	if !requireAccess(c, relOf(absPath), accessRead) {
+	// 原始檔案服務同樣需讀取權，避免繞過樹過濾直接讀取
+	if !f.az.RequireAccess(c, f.store.RelOf(absPath), authz.AccessRead) {
 		return
 	}
 
@@ -377,18 +377,14 @@ func rawFileHandler(c *gin.Context) {
 	}
 
 	// 安全標頭：避免瀏覽器把非預期檔案以同源 inline 方式渲染（HTML/SVG 等）而造成 XSS。
-	//   - X-Content-Type-Options: nosniff 禁止 MIME 嗅探，瀏覽器只認回應的 Content-Type
-	//   - 僅圖片與 PDF 允許 inline（供 <img> 顯示與瀏覽器內預覽），其餘一律強制下載（attachment）
 	ext := strings.ToLower(filepath.Ext(absPath))
 	c.Header("X-Content-Type-Options", "nosniff")
-	if isImageExt(ext) || ext == ".pdf" {
+	if store.IsImageExt(ext) || ext == ".pdf" {
 		c.Header("Content-Disposition", "inline")
 	} else {
-		// filename* 採 RFC 5987 編碼以保留非 ASCII 檔名；去掉上傳時的時間戳記前綴作為友善下載名
 		dlName := tsPrefix.ReplaceAllString(filepath.Base(absPath), "")
 		c.Header("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(dlName))
 	}
 
-	// 由 gin 依副檔名自動帶入適當的 Content-Type 並回傳檔案
 	c.File(absPath)
 }
