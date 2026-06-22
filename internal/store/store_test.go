@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -90,6 +91,72 @@ func TestBuildTree(t *testing.T) {
 	notes := tree.Children[0]
 	if len(notes.Children) != 1 || notes.Children[0].Name != "a.md" || notes.Children[0].Path != "notes/a.md" {
 		t.Errorf("notes 子節點不正確：%+v", notes.Children)
+	}
+}
+
+// TestAtomicWrite 驗證原子寫入能正確覆寫內容、套用權限，且不殘留暫存檔。
+func TestAtomicWrite(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "note.md")
+
+	if err := AtomicWrite(p, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("首次寫入失敗：%v", err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "hello" {
+		t.Errorf("內容=%q want hello", b)
+	}
+
+	// 覆寫
+	if err := AtomicWrite(p, []byte("world"), 0o644); err != nil {
+		t.Fatalf("覆寫失敗：%v", err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "world" {
+		t.Errorf("覆寫後內容=%q want world", b)
+	}
+
+	// 目錄內不應殘留 .tmp-* 暫存檔
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp-") {
+			t.Errorf("殘留暫存檔：%s", e.Name())
+		}
+	}
+}
+
+// TestLockSerializes 驗證同一路徑的 Lock 會互斥，序列化臨界區。
+func TestLockSerializes(t *testing.T) {
+	s := New(t.TempDir())
+	abs := filepath.Join(s.Root, "a.md")
+
+	var mu sync.Mutex
+	inside := 0
+	maxInside := 0
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lock := s.Lock(abs)
+			defer lock.Unlock()
+			mu.Lock()
+			inside++
+			if inside > maxInside {
+				maxInside = inside
+			}
+			mu.Unlock()
+			mu.Lock()
+			inside--
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if maxInside != 1 {
+		t.Errorf("同一路徑臨界區最多應只有 1 個 goroutine，實測 %d", maxInside)
+	}
+
+	// 不同路徑取得不同鎖
+	if s.Lock(abs) == s.Lock(filepath.Join(s.Root, "b.md")) {
+		t.Error("不同路徑不應共用同一把鎖")
 	}
 }
 

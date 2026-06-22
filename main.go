@@ -11,12 +11,17 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
+	"os/signal"
 	"regexp"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -63,7 +68,7 @@ func main() {
 
 	st := store.New(cfg.DocRoot)
 	au := auth.New(cfg, az)
-	h := hub.New(au, cfg)
+	h := hub.New(au, az, cfg)
 	go h.Run()
 
 	fileH := files.New(st, az, h)
@@ -149,7 +154,32 @@ func main() {
 		api.GET("/asset-folders", uploadH.ListAssetFolders)
 	}
 
-	if err := r.Run(":" + cfg.Port); err != nil {
-		panic("伺服器啟動失敗：" + err.Error())
+	// ===== 啟動服務並支援優雅關閉 =====
+	// 收到 SIGINT/SIGTERM 時停止接收新連線，給既有請求一段時間收尾，再結束程序。
+	srv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: r,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			panic("伺服器啟動失敗：" + err.Error())
+		}
+	}()
+	log.Printf("[啟動] 監聽於 :%s", cfg.Port)
+
+	<-ctx.Done()
+	stop() // 還原預設訊號處理，讓再按一次 Ctrl-C 可強制結束
+	log.Println("[關閉] 收到結束訊號，停止接收新連線並等待既有請求收尾…")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("[關閉] 等待逾時，強制結束：%v", err)
+	} else {
+		log.Println("[關閉] 已正常關閉")
 	}
 }

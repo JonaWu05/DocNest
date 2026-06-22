@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // FileNode 代表檔案樹中的一個節點（資料夾或檔案）
@@ -20,11 +21,60 @@ type FileNode struct {
 // Store 綁定文件根目錄，所有路徑操作都以此為基準。
 type Store struct {
 	Root string // DOC_ROOT 的絕對路徑
+
+	// pathLocks 為每個檔案路徑一把鎖，序列化同一檔的「讀版本→比對→寫入」流程，
+	// 避免並發寫入交錯（樂觀鎖的 TOCTOU）。鎖只增不減，數量上限為檔案數，可接受。
+	muIndex   sync.Mutex
+	pathLocks map[string]*sync.Mutex
 }
 
 // New 建立繫結指定根目錄的 Store。
 func New(root string) *Store {
-	return &Store{Root: root}
+	return &Store{Root: root, pathLocks: map[string]*sync.Mutex{}}
+}
+
+// Lock 取得指定絕對路徑的專屬鎖；呼叫端取得後須在用畢時 Unlock。
+// 用於把「讀取現有版本 → 比對 → 寫入」包成同一檔的臨界區。
+func (s *Store) Lock(absPath string) *sync.Mutex {
+	s.muIndex.Lock()
+	mu, ok := s.pathLocks[absPath]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.pathLocks[absPath] = mu
+	}
+	s.muIndex.Unlock()
+	mu.Lock()
+	return mu
+}
+
+// AtomicWrite 以「寫入暫存檔再 rename」的方式原子地覆寫檔案，
+// 避免並發讀者讀到半寫入的內容（os.WriteFile 非原子）。
+func AtomicWrite(absPath string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(absPath)
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	// 任一步失敗都清掉暫存檔，避免殘留。
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, perm); err != nil {
+		return err
+	}
+	// 同目錄 rename 在 Windows / Linux 皆為原子操作。
+	return os.Rename(tmpName, absPath)
 }
 
 // SafeResolve 將使用者傳入的相對路徑解析為絕對路徑，並驗證其確實位於 Root 底下，

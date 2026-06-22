@@ -143,6 +143,10 @@ func (f *Files) WriteFile(c *gin.Context) {
 		return
 	}
 
+	// 同一檔的「讀版本 → 比對 → 寫入」需序列化，否則兩個並發寫入的樂觀鎖檢查可能都通過而互相覆蓋。
+	mu := f.store.Lock(absPath)
+	defer mu.Unlock()
+
 	// 樂觀鎖：用戶端帶了基準版本且與磁碟現況不符 → 回 409，交由前端讓使用者決定。
 	// force=1 表示使用者明確選擇覆蓋，略過檢查。
 	if base := c.GetHeader("X-File-Version"); base != "" && c.Query("force") != "1" {
@@ -162,14 +166,15 @@ func (f *Files) WriteFile(c *gin.Context) {
 		return
 	}
 
-	if err := os.WriteFile(absPath, body, 0o644); err != nil {
+	// 原子寫入：先寫暫存檔再 rename，避免並發讀者讀到半寫入內容。
+	if err := store.AtomicWrite(absPath, body, 0o644); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "寫入檔案失敗：" + err.Error()})
 		return
 	}
 
 	// 廣播 file_updated 通知（僅 path + savedBy，不含內容）。savedBy 取自 JWT，不採信前端。
-	relPath := strings.ReplaceAll(pathParam, "\\", "/")
-	f.hub.BroadcastFileUpdated(relPath, c.GetString("username"))
+	// 路徑用 RelOf 正規化，與 hub 廣播時的讀取權過濾、前端的 currentFile 比對保持一致。
+	f.hub.BroadcastFileUpdated(f.store.RelOf(absPath), c.GetString("username"))
 
 	c.Header("X-File-Version", fileVersion(body))
 	c.JSON(http.StatusOK, gin.H{"message": "儲存成功"})

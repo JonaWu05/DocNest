@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"markdownEditor/internal/auth"
+	"markdownEditor/internal/authz"
 	"markdownEditor/internal/config"
 )
 
@@ -47,6 +48,13 @@ type fileUpdatedPayload struct {
 	SavedBy string `json:"saved_by"`
 }
 
+// outbound 為一則待送出的訊息；path 非空時僅投遞給對該路徑具讀取權的連線，
+// 避免廣播洩漏無權限使用者看不到的檔案路徑（與 authz 的 path-prefix ACL 一致）。
+type outbound struct {
+	data []byte
+	path string
+}
+
 // Client 代表單一 WebSocket 連線。
 type Client struct {
 	hub         *Hub
@@ -69,20 +77,22 @@ type presenceUpdate struct {
 // 因此不需 mutex；其他 goroutine 一律透過 channel 與 hub 溝通。
 type Hub struct {
 	auth     *auth.Auth
+	az       *authz.Authz
 	upgrader websocket.Upgrader
 
 	clients    map[*Client]bool
-	broadcast  chan []byte
+	broadcast  chan outbound
 	register   chan *Client
 	unregister chan *Client
 	presence   chan presenceUpdate
 	count      atomic.Int64
 }
 
-// New 建立 Hub；需要 auth（serveWs 驗證 token）與 cfg（WebSocket Origin 檢查）。
-func New(a *auth.Auth, cfg *config.Config) *Hub {
+// New 建立 Hub；需要 auth（serveWs 驗證 token）、az（廣播時依讀取權過濾路徑）與 cfg（WebSocket Origin 檢查）。
+func New(a *auth.Auth, az *authz.Authz, cfg *config.Config) *Hub {
 	return &Hub{
 		auth: a,
+		az:   az,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -90,11 +100,19 @@ func New(a *auth.Auth, cfg *config.Config) *Hub {
 			CheckOrigin: func(r *http.Request) bool { return cfg.OriginAllowed(r.Header.Get("Origin")) },
 		},
 		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte, sendBuffer),
+		broadcast:  make(chan outbound, sendBuffer),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		presence:   make(chan presenceUpdate),
 	}
+}
+
+// canRead 判斷某連線是否對指定路徑具讀取權。az 未注入（如測試）或路徑為空時一律放行。
+func (h *Hub) canRead(subject, path string) bool {
+	if h.az == nil || path == "" {
+		return true
+	}
+	return h.az.Can(subject, path, authz.AccessRead)
 }
 
 // Run 為 Hub 的單一事件迴圈，所有對 clients / Client 欄位的操作都集中在此。
@@ -121,23 +139,32 @@ func (h *Hub) Run() {
 				h.broadcastPresence()
 			}
 
-		case msg := <-h.broadcast:
-			h.deliver(msg)
+		case o := <-h.broadcast:
+			h.deliver(o)
 		}
 	}
 }
 
 // deliver 把一則「已序列化」訊息送給所有連線；緩衝滿者視為異常連線並移除。
-func (h *Hub) deliver(msg []byte) {
+// o.path 非空時，僅送給對該路徑具讀取權的連線。
+func (h *Hub) deliver(o outbound) {
 	for c := range h.clients {
-		select {
-		case c.send <- msg:
-		default:
-			delete(h.clients, c)
-			close(c.send)
+		if !h.canRead(c.subject, o.path) {
+			continue
 		}
+		h.sendTo(c, o.data)
 	}
 	h.count.Store(int64(len(h.clients)))
+}
+
+// sendTo 將訊息送給單一連線；緩衝滿者視為異常連線並移除。須在 hub goroutine 內呼叫。
+func (h *Hub) sendTo(c *Client, data []byte) {
+	select {
+	case c.send <- data:
+	default:
+		delete(h.clients, c)
+		close(c.send)
+	}
 }
 
 // broadcastPresence 蒐集目前所有連線的狀態，組成 presence_update 廣播給所有人。
@@ -176,11 +203,24 @@ func (h *Hub) broadcastPresence() {
 		users = append(users, *bySubject[k])
 	}
 
-	msg, err := json.Marshal(wsMessage{Type: "presence_update", Payload: presencePayload{Users: users}})
-	if err != nil {
-		return
+	// 每位收件者收到的清單可能不同：對方無讀取權的 current_file 會被遮去（連帶 is_editing），
+	// 避免洩漏「某人正在編輯你看不到的檔案」這類路徑資訊。仍保留該使用者「在線」的事實。
+	for c := range h.clients {
+		view := make([]PresenceUser, len(users))
+		for i, u := range users {
+			if u.CurrentFile != "" && !h.canRead(c.subject, u.CurrentFile) {
+				u.CurrentFile = ""
+				u.IsEditing = false
+			}
+			view[i] = u
+		}
+		msg, err := json.Marshal(wsMessage{Type: "presence_update", Payload: presencePayload{Users: view}})
+		if err != nil {
+			return
+		}
+		h.sendTo(c, msg)
 	}
-	h.deliver(msg)
+	h.count.Store(int64(len(h.clients)))
 }
 
 // BroadcastFileUpdated 由檔案儲存流程呼叫，廣播「某檔被某人更新」的通知給所有人（不含內容）。
@@ -192,7 +232,8 @@ func (h *Hub) BroadcastFileUpdated(path, savedBy string) {
 	if err != nil {
 		return
 	}
-	h.broadcast <- msg
+	// 帶上 path：deliver 只會送給對該檔具讀取權的連線。
+	h.broadcast <- outbound{data: msg, path: path}
 }
 
 // ServeWs 處理 GET /ws：先用 query 參數的 token 做 JWT 驗證，再升級為 WebSocket。
