@@ -99,15 +99,15 @@ func TestAtomicWrite(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "note.md")
 
-	if err := AtomicWrite(p, []byte("hello"), 0o644); err != nil {
+	if err := AtomicWrite(p, []byte("hello"), 0o644, false); err != nil {
 		t.Fatalf("首次寫入失敗：%v", err)
 	}
 	if b, _ := os.ReadFile(p); string(b) != "hello" {
 		t.Errorf("內容=%q want hello", b)
 	}
 
-	// 覆寫
-	if err := AtomicWrite(p, []byte("world"), 0o644); err != nil {
+	// 覆寫（開啟 fsync 路徑也應正常）
+	if err := AtomicWrite(p, []byte("world"), 0o644, true); err != nil {
 		t.Fatalf("覆寫失敗：%v", err)
 	}
 	if b, _ := os.ReadFile(p); string(b) != "world" {
@@ -188,6 +188,42 @@ func TestValidateRelPath(t *testing.T) {
 		if err := ValidateRelPath(p); err == nil {
 			t.Errorf("ValidateRelPath(%q) 應被拒絕", p)
 		}
+	}
+}
+
+// TestCachedTreeInvalidate 驗證快取命中、失效後重建，以及回傳的是共用實例。
+func TestCachedTreeInvalidate(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "a.md"))
+	s := New(root)
+
+	t1, err := s.CachedTree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 連續取用應命中同一快取實例（未逾 TTL、未失效）
+	t2, _ := s.CachedTree()
+	if t1 != t2 {
+		t.Error("TTL 內應回傳同一快取實例")
+	}
+
+	// 失效後應重建出新的實例
+	s.InvalidateTree()
+	t3, _ := s.CachedTree()
+	if t3 == t1 {
+		t.Error("失效後應重建，不該是舊實例")
+	}
+
+	// 新增檔案後（失效）應反映於樹中
+	mustWrite(t, filepath.Join(root, "b.md"))
+	s.InvalidateTree()
+	t4, _ := s.CachedTree()
+	var names []string
+	for _, n := range t4.Children {
+		names = append(names, n.Name)
+	}
+	if len(names) != 2 {
+		t.Errorf("重建後應有 2 個檔案，得到 %v", names)
 	}
 }
 

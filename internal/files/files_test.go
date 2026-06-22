@@ -23,7 +23,7 @@ func TestFilterTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := New(store.New(t.TempDir()), az, nil) // filterTree 不使用 hub，傳 nil 即可
+	f := New(store.New(t.TempDir()), az, nil, false) // filterTree 不使用 hub，傳 nil 即可
 
 	nodes := []*store.FileNode{
 		{Name: "welcome.md", Path: "welcome.md"},
@@ -56,6 +56,31 @@ func TestFilterTree(t *testing.T) {
 	out2 := f.filterTree(cloneNodes(nodes), "local:nobody")
 	if len(out2) != 1 || out2[0].Path != "welcome.md" {
 		t.Errorf("未分組者應只看到 welcome.md，got %+v", out2)
+	}
+}
+
+// TestFileVersion 驗證版本識別（size+mtime）對同一狀態穩定、內容大小改變時變動。
+func TestFileVersion(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "v.md")
+	if err := os.WriteFile(p, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info1, _ := os.Stat(p)
+	v1 := fileVersion(info1)
+
+	// 同一狀態再次 stat：版本應一致
+	info1b, _ := os.Stat(p)
+	if fileVersion(info1b) != v1 {
+		t.Error("同一檔案狀態的版本應穩定")
+	}
+
+	// 改變內容大小：版本應改變（size 不同即可，毋須依賴 mtime 粒度）
+	if err := os.WriteFile(p, []byte("hello world!!"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info2, _ := os.Stat(p)
+	if fileVersion(info2) == v1 {
+		t.Error("內容大小改變後版本應不同")
 	}
 }
 

@@ -2,8 +2,7 @@
 package files
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -30,17 +29,18 @@ type Files struct {
 	store *store.Store
 	az    *authz.Authz
 	hub   *hub.Hub
+	fsync bool // 存檔是否強制刷盤（由設定注入）
 }
 
 // New 建立 Files handler 集合。
-func New(st *store.Store, az *authz.Authz, h *hub.Hub) *Files {
-	return &Files{store: st, az: az, hub: h}
+func New(st *store.Store, az *authz.Authz, h *hub.Hub, fsync bool) *Files {
+	return &Files{store: st, az: az, hub: h, fsync: fsync}
 }
 
-// fileVersion 由內容算出短雜湊，作為樂觀鎖的版本識別。
-func fileVersion(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:8])
+// fileVersion 由檔案的大小與修改時間（奈秒）組出版本識別，作為樂觀鎖的版本（ETag 風格）。
+// 不需讀取整檔內容即可比對，省去每次存檔的整檔重讀（沿用 nginx/Apache 產生 ETag 的做法）。
+func fileVersion(info os.FileInfo) string {
+	return fmt.Sprintf("%x-%x", info.Size(), info.ModTime().UnixNano())
 }
 
 // filterTree 依 subject 的讀取權過濾檔案樹：
@@ -48,26 +48,38 @@ func fileVersion(b []byte) string {
 //   - 資料夾：自身可讀、或含有可讀後代時保留（讓使用者能逐層導覽到可讀檔案）
 //
 // 同時標記每個保留節點的 Writable，供前端隱藏無權限的編輯／刪除操作。
+//
+// 產生「新節點」而非就地修改輸入：輸入來自共用的快取樹（見 store.CachedTree），
+// 不可被各請求的權限過濾汙染。
 func (f *Files) filterTree(nodes []*store.FileNode, subject string) []*store.FileNode {
 	out := []*store.FileNode{}
 	for _, n := range nodes {
 		if n.IsDir {
-			n.Children = f.filterTree(n.Children, subject)
-			if len(n.Children) > 0 || f.az.Can(subject, n.Path, authz.AccessRead) {
-				n.Writable = f.az.Can(subject, n.Path, authz.AccessWrite)
-				out = append(out, n)
+			children := f.filterTree(n.Children, subject)
+			if len(children) > 0 || f.az.Can(subject, n.Path, authz.AccessRead) {
+				out = append(out, &store.FileNode{
+					Name:     n.Name,
+					Path:     n.Path,
+					IsDir:    true,
+					Writable: f.az.Can(subject, n.Path, authz.AccessWrite),
+					Children: children,
+				})
 			}
 		} else if f.az.Can(subject, n.Path, authz.AccessRead) {
-			n.Writable = f.az.Can(subject, n.Path, authz.AccessWrite)
-			out = append(out, n)
+			out = append(out, &store.FileNode{
+				Name:     n.Name,
+				Path:     n.Path,
+				IsDir:    false,
+				Writable: f.az.Can(subject, n.Path, authz.AccessWrite),
+			})
 		}
 	}
 	return out
 }
 
-// ListFiles 處理 GET /api/files：建立檔案樹，依使用者讀取權過濾後回傳。
+// ListFiles 處理 GET /api/files：取得檔案樹（快取），依使用者讀取權過濾後回傳。
 func (f *Files) ListFiles(c *gin.Context) {
-	tree, err := f.store.BuildTree()
+	tree, err := f.store.CachedTree()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "無法讀取文件目錄：" + err.Error()})
 		return
@@ -99,7 +111,8 @@ func (f *Files) ReadFile(c *gin.Context) {
 		return
 	}
 
-	content, err := os.ReadFile(absPath)
+	// 以同一開啟句柄取得內容與版本（size+mtime），避免讀取與 stat 之間檔案被改而不一致。
+	file, err := os.Open(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "檔案不存在"})
@@ -108,9 +121,21 @@ func (f *Files) ReadFile(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "讀取檔案失敗：" + err.Error()})
 		return
 	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "讀取狀態失敗：" + err.Error()})
+		return
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "讀取檔案失敗：" + err.Error()})
+		return
+	}
 
 	// 帶上版本識別，供前端做樂觀鎖
-	c.Header("X-File-Version", fileVersion(content))
+	c.Header("X-File-Version", fileVersion(info))
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", content)
 }
 
@@ -147,17 +172,19 @@ func (f *Files) WriteFile(c *gin.Context) {
 	mu := f.store.Lock(absPath)
 	defer mu.Unlock()
 
-	// 樂觀鎖：用戶端帶了基準版本且與磁碟現況不符 → 回 409，交由前端讓使用者決定。
-	// force=1 表示使用者明確選擇覆蓋，略過檢查。
-	if base := c.GetHeader("X-File-Version"); base != "" && c.Query("force") != "1" {
-		if existing, rerr := os.ReadFile(absPath); rerr == nil {
-			if cur := fileVersion(existing); cur != base {
-				c.JSON(http.StatusConflict, gin.H{
-					"error":           "檔案已被其他人更新，請先載入最新版本",
-					"current_version": cur,
-				})
-				return
-			}
+	// 取現有檔案狀態一次，供樂觀鎖比對與「是否新檔」判斷共用（僅 metadata，不讀內容）。
+	info, statErr := os.Stat(absPath)
+	isNew := os.IsNotExist(statErr)
+
+	// 樂觀鎖：用戶端帶了基準版本且與磁碟現況（size+mtime）不符 → 回 409，交由前端讓使用者決定。
+	// force=1 表示使用者明確選擇覆蓋，略過檢查；新檔（磁碟上不存在）也無從比對，直接建立。
+	if base := c.GetHeader("X-File-Version"); base != "" && c.Query("force") != "1" && statErr == nil {
+		if cur := fileVersion(info); cur != base {
+			c.JSON(http.StatusConflict, gin.H{
+				"error":           "檔案已被其他人更新，請先載入最新版本",
+				"current_version": cur,
+			})
+			return
 		}
 	}
 
@@ -166,17 +193,24 @@ func (f *Files) WriteFile(c *gin.Context) {
 		return
 	}
 
-	// 原子寫入：先寫暫存檔再 rename，避免並發讀者讀到半寫入內容。
-	if err := store.AtomicWrite(absPath, body, 0o644); err != nil {
+	// 原子寫入：先寫暫存檔再 rename，避免並發讀者讀到半寫入內容。fsync 由設定控制。
+	if err := store.AtomicWrite(absPath, body, 0o644, f.fsync); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "寫入檔案失敗：" + err.Error()})
 		return
+	}
+	if isNew {
+		// 只有新增檔案才改變檔案樹，使快取失效；覆寫既有檔不必。
+		f.store.InvalidateTree()
 	}
 
 	// 廣播 file_updated 通知（僅 path + savedBy，不含內容）。savedBy 取自 JWT，不採信前端。
 	// 路徑用 RelOf 正規化，與 hub 廣播時的讀取權過濾、前端的 currentFile 比對保持一致。
 	f.hub.BroadcastFileUpdated(f.store.RelOf(absPath), c.GetString("username"))
 
-	c.Header("X-File-Version", fileVersion(body))
+	// 回傳寫入後的新版本（size+mtime），供前端更新樂觀鎖基準。
+	if newInfo, err := os.Stat(absPath); err == nil {
+		c.Header("X-File-Version", fileVersion(newInfo))
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "儲存成功"})
 }
 
@@ -231,6 +265,7 @@ func (f *Files) DeleteFile(c *gin.Context) {
 		}
 	}
 
+	f.store.InvalidateTree()
 	c.JSON(http.StatusOK, gin.H{"message": "刪除成功"})
 }
 
@@ -287,6 +322,7 @@ func (f *Files) Create(c *gin.Context) {
 		}
 	}
 
+	f.store.InvalidateTree()
 	c.JSON(http.StatusOK, gin.H{"message": "建立成功"})
 }
 
@@ -356,6 +392,7 @@ func (f *Files) Rename(c *gin.Context) {
 		return
 	}
 
+	f.store.InvalidateTree()
 	c.JSON(http.StatusOK, gin.H{"message": "重新命名成功"})
 }
 

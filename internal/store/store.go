@@ -9,7 +9,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
+
+// treeTTL 為檔案樹快取的有效期：上限了「外部（非經本程式）變更」的可見延遲。
+// 經本程式的新增/改名/刪除會主動失效快取，立即反映；此 TTL 只是 fallback。
+// 注意：快取為延遲重建——閒置（無請求）時不會觸發任何磁碟掃描。
+const treeTTL = 2 * time.Second
 
 // FileNode 代表檔案樹中的一個節點（資料夾或檔案）
 type FileNode struct {
@@ -28,6 +34,11 @@ type Store struct {
 	// 避免並發寫入交錯（樂觀鎖的 TOCTOU）。鎖只增不減，數量上限為檔案數，可接受。
 	muIndex   sync.Mutex
 	pathLocks map[string]*sync.Mutex
+
+	// 檔案樹快取：避免每次 /api/files 都全量走訪磁碟。
+	treeMu    sync.Mutex
+	treeCache *FileNode
+	treeAt    time.Time
 }
 
 // New 建立繫結指定根目錄的 Store。
@@ -51,7 +62,10 @@ func (s *Store) Lock(absPath string) *sync.Mutex {
 
 // AtomicWrite 以「寫入暫存檔再 rename」的方式原子地覆寫檔案，
 // 避免並發讀者讀到半寫入的內容（os.WriteFile 非原子）。
-func AtomicWrite(absPath string, data []byte, perm os.FileMode) error {
+//
+// fsync 為 true 時，rename 前先強制把暫存檔刷到實體磁碟，確保斷電也不掉資料（較慢）。
+// 為 false（預設）時略過刷盤：原子性不受影響，僅放棄「斷電當下那一存」的耐久保證。
+func AtomicWrite(absPath string, data []byte, perm os.FileMode, fsync bool) error {
 	dir := filepath.Dir(absPath)
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
@@ -65,9 +79,11 @@ func AtomicWrite(absPath string, data []byte, perm os.FileMode) error {
 		tmp.Close()
 		return err
 	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
+	if fsync {
+		if err := tmp.Sync(); err != nil {
+			tmp.Close()
+			return err
+		}
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -114,6 +130,32 @@ func (s *Store) RelOf(absPath string) string {
 // BuildTree 建立 Root 底下的檔案樹，回傳根節點（其 Children 即頂層項目）。
 func (s *Store) BuildTree() (*FileNode, error) {
 	return buildTree(s.Root, "")
+}
+
+// CachedTree 回傳檔案樹，命中且未逾 TTL 時直接用快取，否則重建。
+//
+// 回傳的樹為「共用唯讀」結構：呼叫端（如權限過濾）不可就地修改其節點，
+// 需自行複製。閒置時不重建，故無背景磁碟負載。
+func (s *Store) CachedTree() (*FileNode, error) {
+	s.treeMu.Lock()
+	defer s.treeMu.Unlock()
+	if s.treeCache != nil && time.Since(s.treeAt) < treeTTL {
+		return s.treeCache, nil
+	}
+	tree, err := buildTree(s.Root, "")
+	if err != nil {
+		return nil, err
+	}
+	s.treeCache = tree
+	s.treeAt = time.Now()
+	return tree, nil
+}
+
+// InvalidateTree 使檔案樹快取失效；新增/改名/刪除/新建檔案後呼叫，讓變更立即可見。
+func (s *Store) InvalidateTree() {
+	s.treeMu.Lock()
+	s.treeCache = nil
+	s.treeMu.Unlock()
 }
 
 // reservedNames 為 Windows 保留的裝置名稱（不分大小寫，含或不含副檔名皆視為非法）。

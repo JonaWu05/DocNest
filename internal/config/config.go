@@ -35,6 +35,11 @@ type Config struct {
 	Discord        *oauth2.Config    // Discord OAuth 設定（nil 代表停用）
 	DiscordAllowed map[string]bool   // 允許登入的 Discord User ID 白名單
 	DefaultDoc     string            // 登入後自動開啟的首頁文件（相對 DOC_ROOT）
+
+	// FsyncOnSave：存檔時是否 fsync 強制刷盤。預設關（多數檔案型應用的做法）。
+	// 關閉不影響原子性（仍靠 temp+rename，讀者不會讀到半檔），僅放棄「斷電當下那一存」的耐久保證。
+	// 對耐久要求高的部署可設 FSYNC_ON_SAVE=true。
+	FsyncOnSave bool
 }
 
 // Load 從環境變數建立設定。JWT_SECRET 為必填，缺少則直接中止啟動。
@@ -108,6 +113,12 @@ func Load() *Config {
 	c.PermissionsFile = strings.TrimSpace(os.Getenv("PERMISSIONS_FILE"))
 	if c.PermissionsFile == "" {
 		c.PermissionsFile = "./permissions.json"
+	}
+
+	// 存檔刷盤：預設關閉，僅在明確設為 true/1 時開啟。
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("FSYNC_ON_SAVE"))) {
+	case "1", "true", "yes", "on":
+		c.FsyncOnSave = true
 	}
 
 	c.TrustedProxies = parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))

@@ -71,7 +71,7 @@ func main() {
 	h := hub.New(au, az, cfg)
 	go h.Run()
 
-	fileH := files.New(st, az, h)
+	fileH := files.New(st, az, h, cfg.FsyncOnSave)
 	uploadH := upload.New(st, az)
 
 	// ===== gin 路由器 =====
