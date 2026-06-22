@@ -48,6 +48,9 @@ var (
 	permDefault  int  // 預設權限等級
 	// subject -> 該使用者所屬所有群組規則的攤平索引（啟動時建好，查詢時零配置）
 	permRulesBySubject map[string][]normRule
+	// 萬用成員 "*" 的規則：套用到「所有已登入者」，與個別 subject 規則合併取最寬鬆。
+	// 用途如：把首頁 welcome.md 開放給任何能登入的人讀取。
+	permRulesEveryone []normRule
 )
 
 // accessLevel 將設定字串轉成權限等級整數。
@@ -96,14 +99,21 @@ func loadPermissions() {
 	permDefault = accessLevel(cfg.Default) // 空字串 / 無法辨識 → none
 
 	// 建立 subject -> 規則 的攤平索引：一個使用者可能同屬多個群組，規則全部合併。
+	// 成員 "*" 為萬用：規則歸入 permRulesEveryone，套用到所有已登入者。
 	permRulesBySubject = map[string][]normRule{}
+	permRulesEveryone = nil
 	for _, g := range cfg.Groups {
 		rules := make([]normRule, 0, len(g.Rules))
 		for _, r := range g.Rules {
 			rules = append(rules, normRule{path: normPath(r.Path), access: accessLevel(r.Access)})
 		}
 		for _, m := range g.Members {
-			if m = strings.TrimSpace(m); m != "" {
+			if m = strings.TrimSpace(m); m == "" {
+				continue
+			}
+			if m == "*" {
+				permRulesEveryone = append(permRulesEveryone, rules...)
+			} else {
 				permRulesBySubject[m] = append(permRulesBySubject[m], rules...)
 			}
 		}
@@ -129,6 +139,12 @@ func effectiveAccess(subject, relPath string) int {
 	}
 	target := normPath(relPath)
 	eff := permDefault
+	// 先套用萬用（所有人）規則，再套用個別 subject 規則；皆取最寬鬆
+	for _, r := range permRulesEveryone {
+		if r.access > eff && matchPath(r.path, target) {
+			eff = r.access
+		}
+	}
 	for _, r := range permRulesBySubject[subject] {
 		if r.access > eff && matchPath(r.path, target) {
 			eff = r.access
@@ -147,6 +163,11 @@ func canAccess(subject, relPath string, need int) bool {
 func hasAnyRead(subject string) bool {
 	if !permsEnabled || permDefault >= accessRead {
 		return true
+	}
+	for _, r := range permRulesEveryone {
+		if r.access >= accessRead {
+			return true
+		}
 	}
 	for _, r := range permRulesBySubject[subject] {
 		if r.access >= accessRead {

@@ -1,11 +1,17 @@
 {
   "//": "權限分組設定範例。複製成 permissions.json（或用環境變數 PERMISSIONS_FILE 指定路徑）即生效。",
   "//default": "未命中任何規則時的預設權限：none（建議，預設全擋）/ read / write。",
-  "//members": "身分鍵格式：本地帳號為 local:<帳號>，Discord 為 discord:<使用者ID>（非顯示名稱）。",
+  "//members": "身分鍵格式：本地帳號為 local:<帳號>，Discord 為 discord:<使用者ID>（非顯示名稱）。特殊值 \"*\" 代表「所有已登入者」，常用來把首頁開放給大家。",
   "//rules": "path 為相對 DOC_ROOT 的路徑前綴（\"\" 代表整個根目錄）；access 為 read 或 write（write 隱含 read）。比對採最長前綴、多群組取最寬鬆。",
 
   "default": "none",
   "groups": {
+    "everyone": {
+      "members": ["*"],
+      "rules": [
+        { "path": "welcome.md", "access": "read" }
+      ]
+    },
     "admins": {
       "members": ["local:admin", "discord:123456789012345678"],
       "rules": [

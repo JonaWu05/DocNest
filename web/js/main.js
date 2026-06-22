@@ -102,7 +102,12 @@ setEnterAppHandler(async (defaultDoc) => {
       '<p>歡迎使用！</p><p class="empty-state-sub">您目前沒有可存取的文件，請聯絡管理員開通權限。</p></div>';
     return;
   }
-  if (defaultDoc) openFileByPath(defaultDoc);
+  // 自動開啟首頁文件，但僅在使用者對它有讀取權時（＝它出現在已過濾的檔案樹中）。
+  // 否則維持空白工作區，不嘗試開啟以免跳出 403「開啟失敗」提示。
+  if (defaultDoc) {
+    const readable = document.querySelector('.tree-label[data-path="' + CSS.escape(defaultDoc) + '"]');
+    if (readable) openFileByPath(defaultDoc);
+  }
 });
 
 // 啟動登入流程：依 token 來源決定顯示登入頁或主介面
