@@ -249,9 +249,9 @@ func (a *Auth) DiscordAuthHandler(c *gin.Context) {
 		return
 	}
 
-	// state 存入 cookie（HttpOnly、限定 callback 路徑、10 分鐘有效），供 callback 比對
-	// 注意：本機開發走 http，secure 設為 false；正式環境（https）應改為 true
-	c.SetCookie("oauth_state", state, 600, "/auth/discord/callback", "", false, true)
+	// state 存入 cookie（HttpOnly、限定 callback 路徑、10 分鐘有效），供 callback 比對。
+	// Secure 旗標由設定驅動：正式 https 部署應設 COOKIE_SECURE=true。
+	c.SetCookie("oauth_state", state, 600, "/auth/discord/callback", "", a.cfg.CookieSecure, true)
 	c.Redirect(http.StatusFound, a.cfg.Discord.AuthCodeURL(state))
 }
 
@@ -270,7 +270,7 @@ func (a *Auth) DiscordCallbackHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "state 驗證失敗（可能為 CSRF 攻擊或授權逾時）"})
 		return
 	}
-	c.SetCookie("oauth_state", "", -1, "/auth/discord/callback", "", false, true)
+	c.SetCookie("oauth_state", "", -1, "/auth/discord/callback", "", a.cfg.CookieSecure, true)
 
 	code := c.Query("code")
 	if code == "" {

@@ -159,6 +159,12 @@ func main() {
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: r,
+		// ReadHeaderTimeout 限制讀取請求標頭的時間，是 slowloris（慢速送標頭佔住連線）的主要防線。
+		ReadHeaderTimeout: 10 * time.Second,
+		// IdleTimeout 回收長時間閒置的 keep-alive 連線。
+		IdleTimeout: 120 * time.Second,
+		// 刻意不設 ReadTimeout / WriteTimeout：附件上傳/下載可達 20 MB，慢速連線需較長時間；
+		// 且 /ws 升級後為長連線。整體請求逾時若需要，應由前方反向代理依路由分別設定。
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

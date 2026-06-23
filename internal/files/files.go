@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"markdownEditor/internal/authz"
+	"markdownEditor/internal/httpx"
 	"markdownEditor/internal/hub"
 	"markdownEditor/internal/store"
 )
@@ -41,6 +42,16 @@ func New(st *store.Store, az *authz.Authz, h *hub.Hub, fsync bool) *Files {
 // 不需讀取整檔內容即可比對，省去每次存檔的整檔重讀（沿用 nginx/Apache 產生 ETag 的做法）。
 func fileVersion(info os.FileInfo) string {
 	return fmt.Sprintf("%x-%x", info.Size(), info.ModTime().UnixNano())
+}
+
+// invalidateFor 依相對路徑讓對應的快取失效：assets 底下 → 附件快取；其餘 → 檔案樹快取。
+// （assets 目錄不在主檔案樹內，兩者為互斥子樹。）
+func (f *Files) invalidateFor(rel string) {
+	if rel == "assets" || strings.HasPrefix(rel, "assets/") {
+		f.store.InvalidateAssets()
+	} else {
+		f.store.InvalidateTree()
+	}
 }
 
 // filterTree 依 subject 的讀取權過濾檔案樹：
@@ -81,7 +92,7 @@ func (f *Files) filterTree(nodes []*store.FileNode, subject string) []*store.Fil
 func (f *Files) ListFiles(c *gin.Context) {
 	tree, err := f.store.CachedTree()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "無法讀取文件目錄：" + err.Error()})
+		httpx.ServerError(c, "無法讀取文件目錄", err)
 		return
 	}
 	children := f.filterTree(tree.Children, authz.SubjectOf(c))
@@ -118,19 +129,19 @@ func (f *Files) ReadFile(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "檔案不存在"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "讀取檔案失敗：" + err.Error()})
+		httpx.ServerError(c, "讀取檔案失敗", err)
 		return
 	}
 	defer file.Close()
 
 	info, err := file.Stat()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "讀取狀態失敗：" + err.Error()})
+		httpx.ServerError(c, "讀取狀態失敗", err)
 		return
 	}
 	content, err := io.ReadAll(file)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "讀取檔案失敗：" + err.Error()})
+		httpx.ServerError(c, "讀取檔案失敗", err)
 		return
 	}
 
@@ -189,18 +200,18 @@ func (f *Files) WriteFile(c *gin.Context) {
 	}
 
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "建立目錄失敗：" + err.Error()})
+		httpx.ServerError(c, "建立目錄失敗", err)
 		return
 	}
 
 	// 原子寫入：先寫暫存檔再 rename，避免並發讀者讀到半寫入內容。fsync 由設定控制。
 	if err := store.AtomicWrite(absPath, body, 0o644, f.fsync); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "寫入檔案失敗：" + err.Error()})
+		httpx.ServerError(c, "寫入檔案失敗", err)
 		return
 	}
 	if isNew {
-		// 只有新增檔案才改變檔案樹，使快取失效；覆寫既有檔不必。
-		f.store.InvalidateTree()
+		// 只有新增檔案才改變結構，使對應快取失效；覆寫既有檔不必。
+		f.invalidateFor(f.store.RelOf(absPath))
 	}
 
 	// 廣播 file_updated 通知（僅 path + savedBy，不含內容）。savedBy 取自 JWT，不採信前端。
@@ -243,13 +254,13 @@ func (f *Files) DeleteFile(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "檔案或資料夾不存在"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "讀取狀態失敗：" + err.Error()})
+		httpx.ServerError(c, "讀取狀態失敗", err)
 		return
 	}
 
 	if info.IsDir() {
 		if err := os.RemoveAll(absPath); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "刪除資料夾失敗：" + err.Error()})
+			httpx.ServerError(c, "刪除資料夾失敗", err)
 			return
 		}
 	} else {
@@ -260,12 +271,12 @@ func (f *Files) DeleteFile(c *gin.Context) {
 			return
 		}
 		if err := os.Remove(absPath); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "刪除檔案失敗：" + err.Error()})
+			httpx.ServerError(c, "刪除檔案失敗", err)
 			return
 		}
 	}
 
-	f.store.InvalidateTree()
+	f.invalidateFor(f.store.RelOf(absPath))
 	c.JSON(http.StatusOK, gin.H{"message": "刪除成功"})
 }
 
@@ -304,7 +315,7 @@ func (f *Files) Create(c *gin.Context) {
 
 	if itemType == "dir" {
 		if err := os.MkdirAll(absPath, 0o755); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "建立資料夾失敗：" + err.Error()})
+			httpx.ServerError(c, "建立資料夾失敗", err)
 			return
 		}
 	} else {
@@ -313,16 +324,16 @@ func (f *Files) Create(c *gin.Context) {
 			return
 		}
 		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "建立目錄失敗：" + err.Error()})
+			httpx.ServerError(c, "建立目錄失敗", err)
 			return
 		}
 		if err := os.WriteFile(absPath, []byte{}, 0o644); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "建立檔案失敗：" + err.Error()})
+			httpx.ServerError(c, "建立檔案失敗", err)
 			return
 		}
 	}
 
-	f.store.InvalidateTree()
+	f.invalidateFor(f.store.RelOf(absPath))
 	c.JSON(http.StatusOK, gin.H{"message": "建立成功"})
 }
 
@@ -368,7 +379,7 @@ func (f *Files) Rename(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "來源不存在"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "讀取狀態失敗：" + err.Error()})
+		httpx.ServerError(c, "讀取狀態失敗", err)
 		return
 	}
 
@@ -383,16 +394,18 @@ func (f *Files) Rename(c *gin.Context) {
 	}
 
 	if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "建立目錄失敗：" + err.Error()})
+		httpx.ServerError(c, "建立目錄失敗", err)
 		return
 	}
 
 	if err := os.Rename(oldAbs, newAbs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "重新命名失敗：" + err.Error()})
+		httpx.ServerError(c, "重新命名失敗", err)
 		return
 	}
 
-	f.store.InvalidateTree()
+	// 改名/移動可能跨越 doc 樹與 assets 樹，兩端各自讓對應快取失效。
+	f.invalidateFor(f.store.RelOf(oldAbs))
+	f.invalidateFor(f.store.RelOf(newAbs))
 	c.JSON(http.StatusOK, gin.H{"message": "重新命名成功"})
 }
 
@@ -421,7 +434,7 @@ func (f *Files) Raw(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "檔案不存在"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "讀取狀態失敗：" + err.Error()})
+		httpx.ServerError(c, "讀取狀態失敗", err)
 		return
 	}
 	if info.IsDir() {

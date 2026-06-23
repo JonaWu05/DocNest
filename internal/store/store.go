@@ -4,6 +4,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,6 +40,21 @@ type Store struct {
 	treeMu    sync.Mutex
 	treeCache *FileNode
 	treeAt    time.Time
+
+	// assets 掃描快取：避免每次列附件都全量走訪 assets 樹（含逐檔 Stat）。
+	// 與檔案樹快取獨立（assets 不在主檔案樹內）。
+	assetMu    sync.Mutex
+	assetCache []AssetEntry
+	assetAt    time.Time
+}
+
+// AssetEntry 為 assets 樹掃描的單一原始項目（未經權限過濾）。
+type AssetEntry struct {
+	Path    string // 相對 Root 的路徑（/ 分隔）
+	Name    string // 名稱
+	IsDir   bool   // 是否為資料夾
+	IsImage bool   // 是否為圖片（檔案才有意義）
+	Size    int64  // 檔案大小（位元組；資料夾為 0）
 }
 
 // New 建立繫結指定根目錄的 Store。
@@ -156,6 +172,77 @@ func (s *Store) InvalidateTree() {
 	s.treeMu.Lock()
 	s.treeCache = nil
 	s.treeMu.Unlock()
+}
+
+// ScanAssets 回傳 assets 樹底下所有項目（檔案與資料夾，未過濾權限），命中且未逾 TTL 時用快取。
+// 回傳的切片為共用唯讀，呼叫端不可就地修改；權限過濾請在各請求自行進行。
+func (s *Store) ScanAssets() ([]AssetEntry, error) {
+	s.assetMu.Lock()
+	defer s.assetMu.Unlock()
+	if s.assetCache != nil && time.Since(s.assetAt) < treeTTL {
+		return s.assetCache, nil
+	}
+	entries, err := scanAssets(s.Root)
+	if err != nil {
+		return nil, err
+	}
+	s.assetCache = entries
+	s.assetAt = time.Now()
+	return entries, nil
+}
+
+// InvalidateAssets 使 assets 掃描快取失效；上傳/刪除/改名/新建涉及 assets 後呼叫。
+func (s *Store) InvalidateAssets() {
+	s.assetMu.Lock()
+	s.assetCache = nil
+	s.assetMu.Unlock()
+}
+
+// scanAssets 走訪 Root/assets，回傳所有檔案與（非隱藏）資料夾。
+// assets 目錄不存在時回傳空清單（非錯誤）。隱藏資料夾（. 開頭）不進入。
+func scanAssets(root string) ([]AssetEntry, error) {
+	out := []AssetEntry{}
+	assetsRoot := filepath.Join(root, "assets")
+	info, err := os.Stat(assetsRoot)
+	if err != nil || !info.IsDir() {
+		return out, nil
+	}
+
+	err = filepath.WalkDir(assetsRoot, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if p == assetsRoot {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			return nil
+		}
+		slash := filepath.ToSlash(rel)
+		if d.IsDir() {
+			if strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			out = append(out, AssetEntry{Path: slash, Name: d.Name(), IsDir: true})
+			return nil
+		}
+		var size int64
+		if fi, err := d.Info(); err == nil {
+			size = fi.Size()
+		}
+		out = append(out, AssetEntry{
+			Path:    slash,
+			Name:    d.Name(),
+			IsImage: IsImageExt(filepath.Ext(p)),
+			Size:    size,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // reservedNames 為 Windows 保留的裝置名稱（不分大小寫，含或不含副檔名皆視為非法）。

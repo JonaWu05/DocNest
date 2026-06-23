@@ -227,6 +227,70 @@ func TestCachedTreeInvalidate(t *testing.T) {
 	}
 }
 
+// TestScanAssetsAndCache 驗證 assets 掃描內容、快取命中與失效後重建。
+func TestScanAssetsAndCache(t *testing.T) {
+	root := t.TempDir()
+	mustMkdir(t, filepath.Join(root, "assets", "sub"))
+	mustWrite(t, filepath.Join(root, "assets", "a.png"))
+	mustWrite(t, filepath.Join(root, "assets", "sub", "b.pdf"))
+	s := New(root)
+
+	entries, err := s.ScanAssets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var files, dirs int
+	var img bool
+	for _, e := range entries {
+		if e.IsDir {
+			dirs++
+		} else {
+			files++
+			if e.Path == "assets/a.png" && e.IsImage {
+				img = true
+			}
+		}
+	}
+	if files != 2 || dirs != 1 {
+		t.Errorf("應有 2 檔 1 資料夾，得到 files=%d dirs=%d", files, dirs)
+	}
+	if !img {
+		t.Error("a.png 應標記為圖片")
+	}
+
+	// 快取命中：同一實例
+	e2, _ := s.ScanAssets()
+	if &entries[0] != &e2[0] {
+		t.Error("TTL 內應回傳同一快取切片")
+	}
+
+	// 失效後新增檔案應反映
+	mustWrite(t, filepath.Join(root, "assets", "c.zip"))
+	s.InvalidateAssets()
+	e3, _ := s.ScanAssets()
+	var n int
+	for _, e := range e3 {
+		if !e.IsDir {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Errorf("失效重建後應有 3 個檔案，得到 %d", n)
+	}
+}
+
+// TestScanAssetsNoDir 驗證 assets 目錄不存在時回傳空清單而非錯誤。
+func TestScanAssetsNoDir(t *testing.T) {
+	s := New(t.TempDir())
+	entries, err := s.ScanAssets()
+	if err != nil {
+		t.Fatalf("無 assets 目錄不應出錯：%v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("應為空清單，得到 %d", len(entries))
+	}
+}
+
 func mustMkdir(t *testing.T, p string) {
 	t.Helper()
 	if err := os.MkdirAll(p, 0o755); err != nil {

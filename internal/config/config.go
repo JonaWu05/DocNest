@@ -40,6 +40,10 @@ type Config struct {
 	// 關閉不影響原子性（仍靠 temp+rename，讀者不會讀到半檔），僅放棄「斷電當下那一存」的耐久保證。
 	// 對耐久要求高的部署可設 FSYNC_ON_SAVE=true。
 	FsyncOnSave bool
+
+	// CookieSecure：OAuth state 等 cookie 是否帶 Secure 旗標。正式環境（https）應設 true。
+	// 反向代理終止 TLS 時 c.Request.TLS 為 nil，無法自動判斷，故以設定驅動。
+	CookieSecure bool
 }
 
 // Load 從環境變數建立設定。JWT_SECRET 為必填，缺少則直接中止啟動。
@@ -116,10 +120,9 @@ func Load() *Config {
 	}
 
 	// 存檔刷盤：預設關閉，僅在明確設為 true/1 時開啟。
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("FSYNC_ON_SAVE"))) {
-	case "1", "true", "yes", "on":
-		c.FsyncOnSave = true
-	}
+	c.FsyncOnSave = parseBoolEnv("FSYNC_ON_SAVE")
+	// Cookie Secure：預設關閉（本機 http 開發），正式 https 部署應設為 true。
+	c.CookieSecure = parseBoolEnv("COOKIE_SECURE")
 
 	c.TrustedProxies = parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
 	for _, o := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
@@ -141,6 +144,15 @@ func (c *Config) OriginAllowed(origin string) bool {
 		if o == origin {
 			return true
 		}
+	}
+	return false
+}
+
+// parseBoolEnv 解析布林環境變數：1/true/yes/on（不分大小寫）視為 true，其餘（含未設定）為 false。
+func parseBoolEnv(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
 	}
 	return false
 }

@@ -3,7 +3,6 @@ package upload
 
 import (
 	"fmt"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"markdownEditor/internal/authz"
+	"markdownEditor/internal/httpx"
 	"markdownEditor/internal/store"
 )
 
@@ -91,14 +91,16 @@ func (u *Upload) UploadFile(c *gin.Context) {
 	}
 
 	if err := os.MkdirAll(filepath.Dir(absTarget), 0o755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "建立目錄失敗：" + err.Error()})
+		httpx.ServerError(c, "建立目錄失敗", err)
 		return
 	}
 
 	if err := c.SaveUploadedFile(fileHeader, absTarget); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "儲存檔案失敗：" + err.Error()})
+		httpx.ServerError(c, "儲存檔案失敗", err)
 		return
 	}
+
+	u.store.InvalidateAssets() // 新增附件，使附件清單快取失效
 
 	c.JSON(http.StatusOK, gin.H{
 		"path":    filepath.ToSlash(storeRel),
@@ -107,42 +109,29 @@ func (u *Upload) UploadFile(c *gin.Context) {
 	})
 }
 
-// ListAssets 處理 GET /api/assets：掃描 assets 樹底下所有檔案（過濾使用者可讀者）回傳。
+// ListAssets 處理 GET /api/assets：自快取取得 assets 清單，過濾使用者可讀的檔案後回傳。
 func (u *Upload) ListAssets(c *gin.Context) {
-	items := []AssetItem{}
 	subject := authz.SubjectOf(c)
-	assetsRoot := filepath.Join(u.store.Root, "assets")
+	entries, err := u.store.ScanAssets()
+	if err != nil {
+		httpx.ServerError(c, "讀取附件失敗", err)
+		return
+	}
 
-	if info, err := os.Stat(assetsRoot); err == nil && info.IsDir() {
-		_ = filepath.WalkDir(assetsRoot, func(p string, d fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return nil
-			}
-			if d.IsDir() {
-				if p != assetsRoot && strings.HasPrefix(d.Name(), ".") {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			rel, err := filepath.Rel(u.store.Root, p)
-			if err != nil {
-				return nil
-			}
-			// 權限過濾：只列出使用者有讀取權的附件
-			if !u.az.Can(subject, filepath.ToSlash(rel), authz.AccessRead) {
-				return nil
-			}
-			var size int64
-			if fi, err := d.Info(); err == nil {
-				size = fi.Size()
-			}
-			items = append(items, AssetItem{
-				Path:    filepath.ToSlash(rel),
-				Name:    d.Name(),
-				IsImage: store.IsImageExt(filepath.Ext(p)),
-				Size:    size,
-			})
-			return nil
+	items := []AssetItem{}
+	for _, e := range entries {
+		if e.IsDir {
+			continue
+		}
+		// 權限過濾：只列出使用者有讀取權的附件
+		if !u.az.Can(subject, e.Path, authz.AccessRead) {
+			continue
+		}
+		items = append(items, AssetItem{
+			Path:    e.Path,
+			Name:    e.Name,
+			IsImage: e.IsImage,
+			Size:    e.Size,
 		})
 	}
 
@@ -161,31 +150,17 @@ func (u *Upload) ListAssetFolders(c *gin.Context) {
 	if u.az.Can(subject, "assets", authz.AccessWrite) {
 		folders = append(folders, "assets")
 	}
-	assetsRoot := filepath.Join(u.store.Root, "assets")
 
-	if info, err := os.Stat(assetsRoot); err == nil && info.IsDir() {
-		_ = filepath.WalkDir(assetsRoot, func(p string, d fs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return nil
-			}
-			if !d.IsDir() {
-				return nil
-			}
-			if p == assetsRoot {
-				return nil
-			}
-			if strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
-			}
-			// 只列出使用者有寫入權的資料夾
-			if rel, err := filepath.Rel(u.store.Root, p); err == nil {
-				slash := filepath.ToSlash(rel)
-				if u.az.Can(subject, slash, authz.AccessWrite) {
-					folders = append(folders, slash)
-				}
-			}
-			return nil
-		})
+	entries, err := u.store.ScanAssets()
+	if err != nil {
+		httpx.ServerError(c, "讀取附件資料夾失敗", err)
+		return
+	}
+	for _, e := range entries {
+		// 只列出使用者有寫入權的資料夾
+		if e.IsDir && u.az.Can(subject, e.Path, authz.AccessWrite) {
+			folders = append(folders, e.Path)
+		}
 	}
 
 	sort.Strings(folders)

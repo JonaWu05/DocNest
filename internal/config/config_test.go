@@ -1,6 +1,26 @@
 package config
 
-import "testing"
+import (
+	"testing"
+)
+
+func TestParseBoolEnv(t *testing.T) {
+	const key = "TEST_BOOL_ENV"
+	truthy := []string{"1", "true", "TRUE", "Yes", " on "}
+	for _, v := range truthy {
+		t.Setenv(key, v)
+		if !parseBoolEnv(key) {
+			t.Errorf("%q 應為 true", v)
+		}
+	}
+	falsy := []string{"", "0", "false", "no", "random"}
+	for _, v := range falsy {
+		t.Setenv(key, v)
+		if parseBoolEnv(key) {
+			t.Errorf("%q 應為 false", v)
+		}
+	}
+}
 
 func TestParseUsers(t *testing.T) {
 	// alice/carol 為 bcrypt（保留）；bob 為明文（忽略）；nocolon 無冒號（忽略）
