@@ -1,8 +1,9 @@
-// 快捷鍵：Ctrl/Cmd+S 儲存、Ctrl/Cmd+1/2/3 切換預覽/編輯/分割、Esc 關閉附件庫。
+// 快捷鍵：Ctrl/Cmd+S 儲存、Ctrl/Cmd+1/2/3 切換預覽/編輯/分割、Esc 關閉開著的對話框。
 import { state } from "./state.js";
-import { assetModal } from "./dom.js";
+import { assetModal, docModal } from "./dom.js";
 import { applyMode, saveFile } from "./editor.js";
 import { closeAssetModal } from "./assets.js";
+import { closeDocPicker } from "./docPicker.js";
 
 // 用 capture 階段攔截，確保比 CodeMirror 與瀏覽器預設行為先處理
 export function initShortcuts() {
@@ -19,8 +20,10 @@ export function initShortcuts() {
       applyMode(e.key === "1" ? "preview" : e.key === "2" ? "edit" : "split");
       return;
     }
-    if (e.key === "Escape" && !assetModal.classList.contains("hidden")) {
-      closeAssetModal();
+    if (e.key === "Escape") {
+      if (!assetModal.classList.contains("hidden")) closeAssetModal();
+      else if (!docModal.classList.contains("hidden")) closeDocPicker();
+      else document.body.classList.remove("sidebar-open"); // 收起行動裝置抽屜（桌面無此 class，無作用）
     }
   }, true);
 }

@@ -173,7 +173,11 @@ export async function insertIntoEditor(md) {
 
 // ===== 開啟檔案 =====
 export async function openFile(path, labelEl) {
-  if (path !== state.currentPath && !(await confirmDiscardIfDirty())) return;
+  // 點同一個已開啟且無未存變更的檔案：不需重抓（也避免無謂的 fetch）
+  if (path === state.currentPath && !state.isDirty) return;
+  // 有未存變更時一律先確認——含「重新載入目前正在編輯的同一個檔案」這個情況，
+  // 否則會在無提示下以伺服器內容覆蓋掉使用者尚未儲存的變更（資料遺失）。
+  if (!(await confirmDiscardIfDirty())) return;
 
   try {
     const res = await authFetch(API_BASE + "/api/file?path=" + encodeURIComponent(path));

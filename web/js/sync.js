@@ -2,6 +2,7 @@
 // 以及自己儲存被樂觀鎖擋下（409）時的衝突提示。
 // 通知不含內容，需要時才向 /api/file 取回最新內容與版本（節省廣播頻寬）。
 import { state, API_BASE } from "./state.js";
+import { previewPane } from "./dom.js";
 import { renderPreview } from "./preview.js";
 import { buildTOC } from "./toc.js";
 import { showToast, setDirty } from "./ui.js";
@@ -38,8 +39,13 @@ export async function handleFileUpdated(payload) {
       if (path !== state.currentPath) return; // 抓取期間可能已切換檔案
       state.currentContent = content;
       state.currentVersion = version;
+      // 重繪會重設 innerHTML 進而把捲動歸零，正在閱讀長文者會被彈回頂端。
+      // 以重繪前的捲動比例近似還原（內容長度可能改變，用比例而非絕對位移）。
+      const denom = (previewPane.scrollHeight - previewPane.clientHeight) || 1;
+      const ratio = previewPane.scrollTop / denom;
       renderPreview();
       buildTOC();
+      previewPane.scrollTop = ratio * (previewPane.scrollHeight - previewPane.clientHeight);
       showToast(saved_by + " 更新了此文件", "info");
     } catch (err) {
       showToast("同步最新內容失敗：" + err.message, "error");
