@@ -4,7 +4,7 @@ package authz
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -59,7 +59,7 @@ func Load(path string) (*Authz, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Printf("[警告] 找不到權限設定檔 %s：未啟用權限分組，所有登入者皆可存取全部檔案（僅適用於開發或單一信任群組）", path)
+			slog.Warn("找不到權限設定檔，未啟用權限分組（所有登入者可存取全部檔案，僅適用於開發或單一信任群組）", "path", path)
 			return &Authz{enabled: false}, nil
 		}
 		return nil, err
@@ -91,7 +91,7 @@ func Load(path string) (*Authz, error) {
 			}
 		}
 	}
-	log.Printf("[權限] 已載入 %s：%d 個群組、預設權限 = %s", path, len(cfg.Groups), strings.ToLower(strings.TrimSpace(cfg.Default)))
+	slog.Info("已載入權限設定", "path", path, "groups", len(cfg.Groups), "default", strings.ToLower(strings.TrimSpace(cfg.Default)))
 	return a, nil
 }
 

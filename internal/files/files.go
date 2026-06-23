@@ -44,6 +44,23 @@ func fileVersion(info os.FileInfo) string {
 	return fmt.Sprintf("%x-%x", info.Size(), info.ModTime().UnixNano())
 }
 
+// resolvePathParam 取出指定 query 參數，並解析成 Root 內的安全絕對路徑。
+// 失敗時已寫好對應錯誤回應（缺參數 → 400；非法/越界路徑 → 403），回傳 ok=false 供呼叫端提早返回。
+// 同時回傳原始相對參數，供需要驗證檔名（ValidateRelPath）的呼叫端使用。
+func (f *Files) resolvePathParam(c *gin.Context, key string) (param, absPath string, ok bool) {
+	param = c.Query(key)
+	if param == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 " + key + " 參數"})
+		return "", "", false
+	}
+	absPath, err := f.store.SafeResolve(param)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
+		return "", "", false
+	}
+	return param, absPath, true
+}
+
 // invalidateFor 依相對路徑讓對應的快取失效：assets 底下 → 附件快取；其餘 → 檔案樹快取。
 // （assets 目錄不在主檔案樹內，兩者為互斥子樹。）
 func (f *Files) invalidateFor(rel string) {
@@ -101,15 +118,8 @@ func (f *Files) ListFiles(c *gin.Context) {
 
 // ReadFile 處理 GET /api/file?path=xxx：讀取檔案內容並以純文字回傳。
 func (f *Files) ReadFile(c *gin.Context) {
-	pathParam := c.Query("path")
-	if pathParam == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 參數"})
-		return
-	}
-
-	absPath, err := f.store.SafeResolve(pathParam)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
+	_, absPath, ok := f.resolvePathParam(c, "path")
+	if !ok {
 		return
 	}
 
@@ -152,15 +162,8 @@ func (f *Files) ReadFile(c *gin.Context) {
 
 // WriteFile 處理 POST /api/file?path=xxx：將 request body 寫入指定檔案。
 func (f *Files) WriteFile(c *gin.Context) {
-	pathParam := c.Query("path")
-	if pathParam == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 參數"})
-		return
-	}
-
-	absPath, err := f.store.SafeResolve(pathParam)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
+	_, absPath, ok := f.resolvePathParam(c, "path")
+	if !ok {
 		return
 	}
 
@@ -227,15 +230,8 @@ func (f *Files) WriteFile(c *gin.Context) {
 
 // DeleteFile 處理 DELETE /api/file?path=xxx：刪除檔案或資料夾。
 func (f *Files) DeleteFile(c *gin.Context) {
-	pathParam := c.Query("path")
-	if pathParam == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 參數"})
-		return
-	}
-
-	absPath, err := f.store.SafeResolve(pathParam)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
+	_, absPath, ok := f.resolvePathParam(c, "path")
+	if !ok {
 		return
 	}
 
@@ -282,25 +278,19 @@ func (f *Files) DeleteFile(c *gin.Context) {
 
 // Create 處理 POST /api/create?path=xxx&type=file|dir：新增檔案或資料夾。
 func (f *Files) Create(c *gin.Context) {
-	pathParam := c.Query("path")
 	itemType := c.Query("type")
-	if pathParam == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 參數"})
-		return
-	}
 	if itemType != "file" && itemType != "dir" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "type 參數必須為 file 或 dir"})
 		return
 	}
 
-	if err := store.ValidateRelPath(pathParam); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	pathParam, absPath, ok := f.resolvePathParam(c, "path")
+	if !ok {
 		return
 	}
 
-	absPath, err := f.store.SafeResolve(pathParam)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
+	if err := store.ValidateRelPath(pathParam); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -339,27 +329,18 @@ func (f *Files) Create(c *gin.Context) {
 
 // Rename 處理 POST /api/rename?path=old&newPath=new：重新命名或移動檔案/資料夾。
 func (f *Files) Rename(c *gin.Context) {
-	oldParam := c.Query("path")
-	newParam := c.Query("newPath")
-	if oldParam == "" || newParam == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 或 newPath 參數"})
+	_, oldAbs, ok := f.resolvePathParam(c, "path")
+	if !ok {
+		return
+	}
+	newParam, newAbs, ok := f.resolvePathParam(c, "newPath")
+	if !ok {
 		return
 	}
 
 	// 目標路徑為使用者新提供的名稱，須驗證合法性（來源已存在、不再重驗）。
 	if err := store.ValidateRelPath(newParam); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	oldAbs, err := f.store.SafeResolve(oldParam)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "非法的來源路徑"})
-		return
-	}
-	newAbs, err := f.store.SafeResolve(newParam)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "非法的目標路徑"})
 		return
 	}
 
@@ -411,15 +392,8 @@ func (f *Files) Rename(c *gin.Context) {
 
 // Raw 處理 GET /api/raw?path=xxx：直接提供原始檔案內容（供圖片/附件顯示與下載）。
 func (f *Files) Raw(c *gin.Context) {
-	pathParam := c.Query("path")
-	if pathParam == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path 參數"})
-		return
-	}
-
-	absPath, err := f.store.SafeResolve(pathParam)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
+	_, absPath, ok := f.resolvePathParam(c, "path")
+	if !ok {
 		return
 	}
 

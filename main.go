@@ -15,8 +15,9 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"os/signal"
 	"regexp"
 	"strings"
@@ -45,16 +46,33 @@ func redactToken(path string) string {
 	return tokenQueryRE.ReplaceAllString(path, "${1}REDACTED")
 }
 
-// accessLogFormatter 為自訂的存取紀錄格式，與 gin 預設相近但會遮罩 token。
-func accessLogFormatter(p gin.LogFormatterParams) string {
-	return fmt.Sprintf("[GIN] %s | %3d | %13v | %15s | %-7s %s\n",
-		p.TimeStamp.Format("2006/01/02 - 15:04:05"),
-		p.StatusCode, p.Latency, p.ClientIP, p.Method,
-		redactToken(p.Path),
-	)
+// accessLogger 為以 slog 輸出的存取紀錄中介層（取代 gin 內建文字格式），並遮罩 query 中的 token。
+func accessLogger() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		// 健康檢查探活頻繁，不記錄以免灌爆日誌。
+		if c.Request.URL.Path == "/healthz" {
+			return
+		}
+		path := c.Request.URL.Path
+		if raw := c.Request.URL.RawQuery; raw != "" {
+			path += "?" + raw
+		}
+		slog.Info("request",
+			"status", c.Writer.Status(),
+			"method", c.Request.Method,
+			"path", redactToken(path),
+			"ip", c.ClientIP(),
+			"latency", time.Since(start).String(),
+		)
+	}
 }
 
 func main() {
+	// 結構化日誌：以 slog 文字格式輸出到 stderr（是否落檔由部署環境決定，程式不自管 log 檔）。
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
 	// 載入 .env（不存在則略過，改用系統環境變數）
 	_ = godotenv.Load()
 
@@ -76,7 +94,7 @@ func main() {
 
 	// ===== gin 路由器 =====
 	r := gin.New()
-	r.Use(gin.LoggerWithFormatter(accessLogFormatter), gin.Recovery())
+	r.Use(accessLogger(), gin.Recovery())
 
 	// 信任的反向代理來源：預設不信任任何代理標頭（避免 X-Forwarded-For 被偽造、繞過登入限流）。
 	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
@@ -92,7 +110,7 @@ func main() {
 	corsConfig.ExposeHeaders = []string{"X-File-Version"}
 	if len(cfg.AllowedOrigins) == 0 {
 		corsConfig.AllowAllOrigins = true
-		log.Println("[警告] 未設定 ALLOWED_ORIGINS：CORS 與 WebSocket 允許所有來源，僅適用於開發環境")
+		slog.Warn("未設定 ALLOWED_ORIGINS：CORS 與 WebSocket 允許所有來源，僅適用於開發環境")
 	} else {
 		corsConfig.AllowOrigins = cfg.AllowedOrigins
 	}
@@ -114,6 +132,11 @@ func main() {
 	})
 
 	// ===== 公開路由（無需登入）=====
+	// 健康檢查：供反向代理 / 容器 / k8s 探活（liveness）。僅回報行程存活，不檢查相依資源。
+	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
 	r.LoadHTMLFiles("./web/index.html")
 	// 預先組好登入背景的 CSS 覆寫規則。LOGIN_BG 由營運者經環境變數設定（可信來源），
 	// 故以 template.CSS 型別注入；否則 html/template 會把 url() 值濾成 ZgotmplZ。
@@ -175,19 +198,19 @@ func main() {
 			panic("伺服器啟動失敗：" + err.Error())
 		}
 	}()
-	log.Printf("[啟動] 監聽於 :%s", cfg.Port)
+	slog.Info("伺服器啟動", "port", cfg.Port)
 
 	<-ctx.Done()
 	stop() // 還原預設訊號處理，讓再按一次 Ctrl-C 可強制結束
-	log.Println("[關閉] 收到結束訊號，停止接收新連線並等待既有請求收尾…")
+	slog.Info("收到結束訊號，停止接收新連線並等待既有請求收尾")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// 先停 HTTP（不再接收新請求，也就不會再產生 file_updated 廣播）；
 	// 被劫持的 WebSocket 連線不受 http.Server.Shutdown 管轄，故隨後由 Hub.Close 主動收尾。
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("[關閉] HTTP 等待逾時，強制結束：%v", err)
+		slog.Error("HTTP 關閉逾時，強制結束", "err", err)
 	}
 	h.Close()
-	log.Println("[關閉] 已關閉所有連線，正常結束")
+	slog.Info("已關閉所有連線，正常結束")
 }

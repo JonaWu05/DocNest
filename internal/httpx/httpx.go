@@ -2,7 +2,7 @@
 package httpx
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -13,6 +13,6 @@ import (
 // 目的：避免把 err.Error()（檔案系統錯誤常含絕對路徑等內部資訊）洩漏給前端，
 // 同時保留可供排錯的伺服器日誌。用 c.FullPath()（路由樣板）而非完整 URL，避免記到 query 中的 token。
 func ServerError(c *gin.Context, userMsg string, err error) {
-	log.Printf("[錯誤] %s %s: %v", c.Request.Method, c.FullPath(), err)
+	slog.Error(userMsg, "method", c.Request.Method, "path", c.FullPath(), "err", err)
 	c.JSON(http.StatusInternalServerError, gin.H{"error": userMsg})
 }

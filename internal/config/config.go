@@ -2,7 +2,7 @@
 package config
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -189,9 +189,7 @@ func parseUsers(raw string) map[string]string {
 			continue
 		}
 		if !strings.HasPrefix(hash, "$2") {
-			fmt.Fprintf(os.Stderr,
-				"[警告] 使用者 %q 的密碼不是 bcrypt hash，已忽略。請用 `go run ./cmd/hashpw '密碼'` 產生 hash 後填入 USERS。\n",
-				name)
+			slog.Warn("使用者密碼不是 bcrypt hash，已忽略（請用 go run ./cmd/hashpw '密碼' 產生後填入 USERS）", "user", name)
 			continue
 		}
 		users[name] = hash
