@@ -12,10 +12,11 @@ export function renderPreview() {
   previewPane.innerHTML = DOMPurify.sanitize(marked.parse(state.currentContent || ""));
   // 依文件順序為標題加上 id，與 TOC 項目的索引一一對應，供點擊跳轉
   previewPane.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((h, i) => { h.id = "toc-h-" + i; });
-  // 圖片：相對路徑改指向 /api/raw 才能顯示（rawUrl 會夾帶 token）
+  // 圖片：相對路徑改指向 /api/raw 才能顯示（rawUrl 會夾帶 token）。
+  // 帶上 from＝目前文件，讓無 asset 直接讀取權的閱讀者也能看本頁引用的圖（後端來源驗證）。
   previewPane.querySelectorAll("img").forEach(img => {
     const resolved = resolveAssetPath(img.getAttribute("src"));
-    if (resolved) img.src = rawUrl(resolved);
+    if (resolved) img.src = rawUrl(resolved, state.currentPath);
   });
   // 連結改寫：
   //   - 指向 .md / .txt 文件 → 站內開啟（點擊即在 app 內切換到該文件，不離開頁面）
@@ -32,7 +33,7 @@ export function renderPreview() {
         openFileByPath(resolved);
       });
     } else {
-      a.href = rawUrl(resolved);
+      a.href = rawUrl(resolved, state.currentPath); // from＝目前文件，供閱讀者下載本頁引用的附件
       a.target = "_blank";
       a.rel = "noopener noreferrer"; // 防 tabnabbing 與 referrer 外洩（連結含 token 的 raw URL）
     }

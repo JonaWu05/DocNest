@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 
@@ -31,11 +32,22 @@ type Files struct {
 	az    *authz.Authz
 	hub   *hub.Hub
 	fsync bool // 存檔是否強制刷盤（由設定注入）
+
+	// 來源文件 → 其引用的 asset 集合的解析快取（供 Raw 的「來源驗證」授權使用）。
+	// 以 size+mtime 版本識別判斷是否過期，避免同一頁多張圖重複讀檔解析。
+	refMu    sync.RWMutex
+	refCache map[string]refCacheEntry
+}
+
+// refCacheEntry 為單一來源文件的解析結果。
+type refCacheEntry struct {
+	version string          // 解析當下來源文件的版本（size+mtime）
+	refs    map[string]bool // 該文件引用的 asset（DOC_ROOT 相對路徑）集合
 }
 
 // New 建立 Files handler 集合。
 func New(st *store.Store, az *authz.Authz, h *hub.Hub, fsync bool) *Files {
-	return &Files{store: st, az: az, hub: h, fsync: fsync}
+	return &Files{store: st, az: az, hub: h, fsync: fsync, refCache: map[string]refCacheEntry{}}
 }
 
 // fileVersion 由檔案的大小與修改時間（奈秒）組出版本識別，作為樂觀鎖的版本（ETag 風格）。
@@ -397,8 +409,12 @@ func (f *Files) Raw(c *gin.Context) {
 		return
 	}
 
-	// 原始檔案服務同樣需讀取權，避免繞過樹過濾直接讀取
-	if !f.az.RequireAccess(c, f.store.RelOf(absPath), authz.AccessRead) {
+	// 原始檔案服務同樣需讀取權，避免繞過樹過濾直接讀取。
+	// 直接權限不足時，再嘗試「來源文件驗證」：閱讀者可檢視自己有權讀、
+	// 且該頁確實引用到的 asset（見 allowViaReferrer）。
+	relPath := f.store.RelOf(absPath)
+	if !f.az.Can(authz.SubjectOf(c), relPath, authz.AccessRead) && !f.allowViaReferrer(c, relPath) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "權限不足"})
 		return
 	}
 
@@ -421,10 +437,123 @@ func (f *Files) Raw(c *gin.Context) {
 	c.Header("X-Content-Type-Options", "nosniff")
 	if store.IsImageExt(ext) || ext == ".pdf" {
 		c.Header("Content-Disposition", "inline")
+		// 附件內容實質不可變（檔名含時間戳記，更新即換新檔），可讓瀏覽器長時間快取，
+		// 避免同一頁/重複瀏覽反覆回源。private：含 token，不可由中介快取共用。
+		c.Header("Cache-Control", "private, max-age=86400")
 	} else {
 		dlName := tsPrefix.ReplaceAllString(filepath.Base(absPath), "")
 		c.Header("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(dlName))
 	}
 
 	c.File(absPath)
+}
+
+// mdLinkRe 擷取 Markdown 圖片/連結的目標：![alt](target) 與 [text](target)。
+// htmlSrcRe 擷取原始 HTML 的 <img src> / <a href>，涵蓋 Markdown 內嵌 HTML 的引用。
+var (
+	mdLinkRe   = regexp.MustCompile(`!?\[[^\]]*\]\(([^)]+)\)`)
+	htmlSrcRe  = regexp.MustCompile(`(?i)<(?:img|a)\b[^>]*?(?:src|href)\s*=\s*["']([^"']+)["']`)
+	externalRe = regexp.MustCompile(`(?i)^(?:https?:|data:|mailto:|#|/)`)
+)
+
+// allowViareferrer 判斷閱讀者能否經由「來源文件」檢視某個自己沒有直接讀取權的 asset：
+// 需同時滿足 (1) 對 from 文件有讀取權、(2) 該文件確實引用了這個 asset。
+// 兩者皆成立，等同「使用者讀得到的頁面內嵌的圖」，不致被拿來撈未授權的其他附件。
+func (f *Files) allowViaReferrer(c *gin.Context, assetRel string) bool {
+	from := strings.TrimSpace(c.Query("from"))
+	if from == "" {
+		return false
+	}
+	fromAbs, err := f.store.SafeResolve(from)
+	if err != nil {
+		return false
+	}
+	fromRel := f.store.RelOf(fromAbs)
+	// 來源必須是合法文件且使用者有讀取權
+	if !store.IsAllowedFile(fromAbs) || !f.az.Can(authz.SubjectOf(c), fromRel, authz.AccessRead) {
+		return false
+	}
+	refs, ok := f.docReferences(fromAbs, fromRel)
+	return ok && refs[assetRel]
+}
+
+// docReferences 回傳來源文件引用的 asset 集合（DOC_ROOT 相對路徑），以 size+mtime 版本快取。
+// 同一頁多張圖只需解析一次；文件內容變更（mtime 改變）後自動失效重算。
+func (f *Files) docReferences(absPath, relPath string) (map[string]bool, bool) {
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, false
+	}
+	version := fileVersion(info)
+
+	f.refMu.RLock()
+	entry, hit := f.refCache[relPath]
+	f.refMu.RUnlock()
+	if hit && entry.version == version {
+		return entry.refs, true
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, false
+	}
+	refs := extractAssetRefs(string(data), relPath)
+
+	f.refMu.Lock()
+	f.refCache[relPath] = refCacheEntry{version: version, refs: refs}
+	f.refMu.Unlock()
+	return refs, true
+}
+
+// extractAssetRefs 解析文件內容，回傳其引用的本機 asset（DOC_ROOT 相對路徑）集合。
+// 外部連結（http、data、mailto、# 錨點、絕對路徑）一律略過；相對路徑以來源文件所在目錄解析，
+// 與前端 util.js 的 resolveAssetPath 規則一致，確保授權判斷與實際渲染的連結對得上。
+func extractAssetRefs(content, docRel string) map[string]bool {
+	refs := map[string]bool{}
+	collect := func(matches [][]string) {
+		for _, m := range matches {
+			raw := strings.TrimSpace(m[1])
+			// 去掉 Markdown 連結可能帶的標題：](path "title") 取第一段；以及 <path> 角括號
+			if i := strings.IndexAny(raw, " \t"); i >= 0 {
+				raw = raw[:i]
+			}
+			raw = strings.Trim(raw, "<>")
+			if raw == "" || externalRe.MatchString(raw) {
+				continue
+			}
+			if dec, err := url.PathUnescape(raw); err == nil {
+				raw = dec
+			}
+			if resolved := resolveAssetRel(docRel, raw); resolved != "" {
+				refs[resolved] = true
+			}
+		}
+	}
+	collect(mdLinkRe.FindAllStringSubmatch(content, -1))
+	collect(htmlSrcRe.FindAllStringSubmatch(content, -1))
+	return refs
+}
+
+// resolveAssetRel 將「相對於來源文件」的連結換算成 DOC_ROOT 相對路徑（處理 . 與 ..）。
+// 對應前端 util.js resolveAssetPath 的堆疊解析。
+func resolveAssetRel(docRel, src string) string {
+	parts := []string{}
+	if i := strings.LastIndex(docRel, "/"); i >= 0 {
+		parts = append(parts, strings.Split(docRel[:i], "/")...)
+	}
+	parts = append(parts, strings.Split(src, "/")...)
+	stack := []string{}
+	for _, p := range parts {
+		switch p {
+		case "", ".":
+			// 略過
+		case "..":
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		default:
+			stack = append(stack, p)
+		}
+	}
+	return strings.Join(stack, "/")
 }

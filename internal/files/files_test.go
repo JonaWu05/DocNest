@@ -84,6 +84,55 @@ func TestFileVersion(t *testing.T) {
 	}
 }
 
+// TestResolveAssetRel 驗證「相對於來源文件」的連結換算成 DOC_ROOT 相對路徑，與前端規則一致。
+func TestResolveAssetRel(t *testing.T) {
+	cases := []struct{ docRel, src, want string }{
+		{"notes/a.md", "assets/x.png", "notes/assets/x.png"},   // 同層相對
+		{"notes/a.md", "../assets/x.png", "assets/x.png"},      // 上一層
+		{"notes/sub/a.md", "../../assets/x.png", "assets/x.png"}, // 多層上溯
+		{"a.md", "assets/x.png", "assets/x.png"},              // 根目錄文件
+		{"notes/a.md", "./img/x.png", "notes/img/x.png"},      // ./ 當前目錄
+		{"notes/a.md", "../../../x.png", "x.png"},             // 上溯超出根：多餘的 .. 被吃掉
+	}
+	for _, c := range cases {
+		if got := resolveAssetRel(c.docRel, c.src); got != c.want {
+			t.Errorf("resolveAssetRel(%q, %q) = %q, want %q", c.docRel, c.src, got, c.want)
+		}
+	}
+}
+
+// TestExtractAssetRefs 驗證從文件內容解析出引用的本機 asset：
+// 涵蓋 Markdown 圖片/連結、原始 HTML、標題與角括號、URL 編碼，並略過外部連結。
+func TestExtractAssetRefs(t *testing.T) {
+	content := "" +
+		"![pic](assets/a.png)\n" +
+		"[file](../shared/b.pdf)\n" +
+		"![t](assets/c.png \"標題\")\n" + // 帶標題
+		"[d](<assets/d%20space.png>)\n" + // 角括號 + URL 編碼空白
+		"<img src=\"assets/e.png\">\n" + // 原始 HTML img
+		"[ext](https://example.com/x.png)\n" + // 外部，略過
+		"[abs](/etc/passwd)\n" + // 絕對路徑，略過
+		"[anchor](#section)\n" // 錨點，略過
+
+	refs := extractAssetRefs(content, "notes/doc.md")
+
+	want := []string{
+		"notes/assets/a.png",
+		"shared/b.pdf",
+		"notes/assets/c.png",
+		"notes/assets/d space.png",
+		"notes/assets/e.png",
+	}
+	for _, w := range want {
+		if !refs[w] {
+			t.Errorf("應解析出引用 %q，refs=%v", w, refs)
+		}
+	}
+	if len(refs) != len(want) {
+		t.Errorf("外部/絕對/錨點連結應被略過，預期 %d 筆，got %d：%v", len(want), len(refs), refs)
+	}
+}
+
 // cloneNodes 複製一份節點樹，避免 filterTree 就地修改 Children 影響第二次呼叫。
 func cloneNodes(nodes []*store.FileNode) []*store.FileNode {
 	out := make([]*store.FileNode, len(nodes))

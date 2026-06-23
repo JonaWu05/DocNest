@@ -44,8 +44,11 @@ export async function ensureOk(res) {
 // 原始檔案 URL（供 <img>/<a> 使用）。
 // 瀏覽器無法為 <img> 設定 Authorization 標頭，故把 token 以 query 參數夾帶，
 // 後端 middleware 會接受 ?token= 作為備援（僅本機開發場景）。
-export function rawUrl(path) {
+// from：來源文件路徑（選填）。讓只有「該頁讀取權」而無 asset 直接讀取權的閱讀者，
+// 仍能檢視自己有權讀的頁面所引用的圖片／附件（後端 Raw 的來源驗證，見 files.go）。
+export function rawUrl(path, from) {
   const t = getToken();
   return API_BASE + "/api/raw?path=" + encodeURIComponent(path) +
-    (t ? "&token=" + encodeURIComponent(t) : "");
+    (t ? "&token=" + encodeURIComponent(t) : "") +
+    (from ? "&from=" + encodeURIComponent(from) : "");
 }
