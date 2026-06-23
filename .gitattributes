@@ -1,0 +1,2 @@
+# 第三方相依（pinned 版本，非本專案程式碼）：排除於 GitHub 語言統計之外
+web/vendor/** linguist-vendored

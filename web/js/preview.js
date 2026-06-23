@@ -4,17 +4,22 @@ import { previewPane } from "./dom.js";
 import { resolveAssetPath } from "./util.js";
 import { rawUrl } from "./auth.js";
 import { openFileByPath } from "./editor.js";
+import { currentTokens } from "./markdown.js";
 
 export function renderPreview() {
   // 先以 marked 轉成 HTML，再經 DOMPurify 消毒後才寫入 DOM。
   // 這是必要的防護：Markdown 允許內嵌原始 HTML，且協作模式下他人儲存的內容
   // 會在本機渲染，未消毒即等同儲存型 XSS（可竊取 token）。
-  previewPane.innerHTML = DOMPurify.sanitize(marked.parse(state.currentContent || ""));
+  // 解析共用 currentTokens（與 TOC 共享同一次 lex），再以 marked.parser 產生 HTML。
+  previewPane.innerHTML = DOMPurify.sanitize(marked.parser(currentTokens()));
   // 依文件順序為標題加上 id，與 TOC 項目的索引一一對應，供點擊跳轉
   previewPane.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((h, i) => { h.id = "toc-h-" + i; });
   // 圖片：相對路徑改指向 /api/raw 才能顯示（rawUrl 會夾帶 token）。
   // 帶上 from＝目前文件，讓無 asset 直接讀取權的閱讀者也能看本頁引用的圖（後端來源驗證）。
+  // lazy + async：圖多的文件不必一次全載/全解碼，加快首屏與捲動順暢度。
   previewPane.querySelectorAll("img").forEach(img => {
+    img.loading = "lazy";
+    img.decoding = "async";
     const resolved = resolveAssetPath(img.getAttribute("src"));
     if (resolved) img.src = rawUrl(resolved, state.currentPath);
   });

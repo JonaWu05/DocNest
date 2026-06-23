@@ -7,7 +7,7 @@ import {
   docModal, docSearch, fileSearchEl, fileTreeEl,
 } from "./dom.js";
 import { applyTheme } from "./theme.js";
-import { buildTOC, initScrollSpy } from "./toc.js";
+import { buildTOC } from "./toc.js";
 import { debounce } from "./util.js";
 import { syncFromPreview } from "./scrollSync.js";
 import { loadFileTree, createItem, filterFileTree } from "./fileTree.js";
@@ -105,7 +105,6 @@ window.addEventListener("beforeunload", (e) => {
 
 initShortcuts();
 initSidebarResize(); // 側欄寬度拖曳調整
-initScrollSpy(); // 捲動預覽時於目錄高亮目前段落
 initSync(); // 綁定 file_updated 提示條的載入/忽略按鈕
 
 // 註冊 WebSocket 訊息處理（連線在登入後才建立）
