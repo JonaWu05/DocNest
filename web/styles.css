@@ -114,9 +114,35 @@ body.resizing-sidebar {
   background: var(--btn-bg-hover);
 }
 
+/* 檔案樹搜尋框 */
+#file-search-wrap {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.file-search {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+.file-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 #file-tree {
   padding: 8px 0;
   flex: 1;
+}
+
+/* 過濾時隱藏不符合的節點（純客戶端，不重建 DOM） */
+.tree-node.filter-hidden {
+  display: none;
 }
 
 .tree-node {
@@ -1027,10 +1053,70 @@ body.dark .cm-s-easymde .cm-comment {
   color: var(--accent);
 }
 
+/* scroll-spy：捲動時高亮目前所在段落 */
+.toc-item.active {
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .toc-empty {
   padding: 6px 12px;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* ===== 行動裝置 / 窄螢幕：側欄改為可滑出的抽屜 ===== */
+/* 桌面預設：隱藏漢堡鈕與抽屜遮罩 */
+#sidebar-toggle { display: none; }
+#sidebar-backdrop { display: none; }
+
+@media (max-width: 768px) {
+  #sidebar-toggle {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* 側欄脫離流排、改為固定定位的抽屜；預設滑出畫面外。
+     width 用 !important 蓋過拖曳調整寫入的 inline style，抽屜模式不沿用桌面寬度。 */
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 82% !important;
+    max-width: 300px;
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 2px 0 12px rgba(0, 0, 0, 0.25);
+  }
+
+  body.sidebar-open #sidebar {
+    transform: translateX(0);
+  }
+
+  #sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 50;
+  }
+
+  body.sidebar-open #sidebar-backdrop {
+    display: block;
+  }
+
+  /* 抽屜模式不需要拖曳調整條 */
+  #sidebar-resizer {
+    display: none;
+  }
+
+  /* 工具列在窄螢幕縮減內距（按鈕已 flex-wrap 自動換行）*/
+  #toolbar {
+    padding: 8px 10px;
+    gap: 8px;
+  }
 }
 
 /* ===== 列印 / 匯出 PDF：只保留預覽內容，並強制亮色以利閱讀 ===== */

@@ -4,12 +4,13 @@ import { state } from "./state.js";
 import {
   modeButtons, saveBtn, exportBtn, themeBtn, attachBtn, attachInput,
   assetModal, assetTarget, autosaveToggle, tocHeader, tocToggle, tocSection, previewPane,
-  docModal, docSearch,
+  docModal, docSearch, fileSearchEl, fileTreeEl,
 } from "./dom.js";
 import { applyTheme } from "./theme.js";
-import { buildTOC } from "./toc.js";
+import { buildTOC, initScrollSpy } from "./toc.js";
+import { debounce } from "./util.js";
 import { syncFromPreview } from "./scrollSync.js";
-import { loadFileTree, createItem } from "./fileTree.js";
+import { loadFileTree, createItem, filterFileTree } from "./fileTree.js";
 import { applyMode, saveFile, scheduleAutosave, openFileByPath } from "./editor.js";
 import {
   openAssetModal, closeAssetModal, createTargetFolder, uploadToLibrary,
@@ -31,6 +32,19 @@ themeBtn.addEventListener("click", () => {
   applyTheme(document.body.classList.contains("dark") ? "light" : "dark");
 });
 document.getElementById("refresh-btn").addEventListener("click", loadFileTree);
+
+// 檔案樹即時搜尋：純客戶端過濾已載入的 DOM（debounce 避免逐鍵全樹掃描）
+const debouncedFilter = debounce(() => filterFileTree(fileSearchEl.value), 120);
+fileSearchEl.addEventListener("input", debouncedFilter);
+// Esc：有關鍵字時清空並還原檔案樹（stopPropagation 避免全域 Esc 處理器接手）
+fileSearchEl.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && fileSearchEl.value) {
+    e.preventDefault();
+    e.stopPropagation();
+    fileSearchEl.value = "";
+    filterFileTree("");
+  }
+});
 
 // 目錄區：點標題列摺疊 / 展開
 tocHeader.addEventListener("click", () => {
@@ -71,12 +85,27 @@ autosaveToggle.addEventListener("change", () => {
   if (autosaveToggle.checked && state.isDirty) scheduleAutosave();
 });
 
+// ===== 行動裝置：側欄抽屜開關（桌面寬度時這些控制項由 CSS 隱藏，不影響）=====
+const sidebarBackdrop = document.getElementById("sidebar-backdrop");
+const closeDrawer = () => document.body.classList.remove("sidebar-open");
+document.getElementById("sidebar-toggle")
+  .addEventListener("click", () => document.body.classList.toggle("sidebar-open"));
+sidebarBackdrop.addEventListener("click", closeDrawer);
+// 點開檔案後自動收起抽屜（僅檔案節點；點資料夾展開/收合不收起）
+fileTreeEl.addEventListener("click", (e) => {
+  const label = e.target.closest(".tree-label");
+  if (!label) return;
+  const node = label.closest(".tree-node");
+  if (node && !node.querySelector(":scope > .tree-children")) closeDrawer();
+});
+
 window.addEventListener("beforeunload", (e) => {
   if (state.isDirty) { e.preventDefault(); e.returnValue = ""; }
 });
 
 initShortcuts();
 initSidebarResize(); // 側欄寬度拖曳調整
+initScrollSpy(); // 捲動預覽時於目錄高亮目前段落
 initSync(); // 綁定 file_updated 提示條的載入/忽略按鈕
 
 // 註冊 WebSocket 訊息處理（連線在登入後才建立）

@@ -10,6 +10,10 @@ import { promptModal, confirmModal } from "./modal.js";
 // 已展開的資料夾路徑集合：跨「重建檔案樹」保留，避免每次新增/改名/刪除後所有資料夾收合。
 const expandedDirs = new Set();
 
+// 目前的搜尋關鍵字：重建檔案樹（重新整理 / 新增 / 改名 / 刪除）後需重新套用，
+// 否則新建出來的 DOM 會顯示全部節點而忽略使用者正在輸入的過濾條件。
+let currentFilter = "";
+
 // 建立一個 FontAwesome 圖示元素（樹狀的檔案 / 資料夾圖示）
 function makeGlyph(faClass) {
   const i = document.createElement("i");
@@ -50,10 +54,76 @@ export async function loadFileTree() {
       if (active) active.classList.add("active");
     }
     updateTreeDots(); // 重新渲染後，依最新 presence 重新標示小圓點
+    if (currentFilter) applyFilter(currentFilter); // 重建後重新套用目前的搜尋條件
     fileTreeEl.scrollTop = savedScroll;
   } catch (err) {
     fileTreeEl.innerHTML = '<div class="empty-hint">載入失敗：' + err.message + '</div>';
   }
+}
+
+// ===== 檔案樹即時過濾（純客戶端：直接篩選已渲染的 DOM，不再向後端要資料）=====
+// 命中的檔案會連同其所有上層資料夾一起顯示，並暫時展開以露出結果；
+// 清空關鍵字則還原各資料夾原本的展開 / 收合狀態（依 expandedDirs）。
+export function filterFileTree(keyword) {
+  currentFilter = (keyword || "").trim();
+  applyFilter(currentFilter);
+}
+
+function applyFilter(keyword) {
+  const kw = keyword.toLowerCase();
+  let anyMatch = false;
+  fileTreeEl.querySelectorAll(":scope > .tree-node").forEach(node => {
+    if (filterNode(node, kw, false)) anyMatch = true;
+  });
+  // 無任何符合時給提示（過濾不重建 DOM，故用一個獨立元素插入 / 移除）
+  let emptyHint = fileTreeEl.querySelector(".filter-empty");
+  if (kw && !anyMatch) {
+    if (!emptyHint) {
+      emptyHint = document.createElement("div");
+      emptyHint.className = "empty-hint filter-empty";
+      fileTreeEl.appendChild(emptyHint);
+    }
+    emptyHint.textContent = '找不到符合「' + keyword + '」的檔案';
+  } else if (emptyHint) {
+    emptyHint.remove();
+  }
+}
+
+// 回傳此節點（含子孫）是否應顯示，並據此設定隱藏與展開狀態。
+// forceShow：上層資料夾名稱已命中時，其底下全部顯示。
+function filterNode(node, kw, forceShow) {
+  const label = node.querySelector(":scope > .tree-label");
+  const childrenWrap = node.querySelector(":scope > .tree-children");
+  const path = label ? (label.dataset.path || "") : "";
+  const selfMatch = kw === "" || path.toLowerCase().includes(kw);
+
+  if (!childrenWrap) { // 檔案節點
+    const visible = forceShow || selfMatch;
+    node.classList.toggle("filter-hidden", !visible);
+    return visible;
+  }
+
+  // 資料夾節點：自己命中 → 子孫全顯示；否則看子孫是否有命中
+  const childForce = forceShow || selfMatch;
+  let anyChild = false;
+  childrenWrap.querySelectorAll(":scope > .tree-node").forEach(child => {
+    if (filterNode(child, kw, childForce)) anyChild = true;
+  });
+  const visible = forceShow || selfMatch || anyChild;
+  node.classList.toggle("filter-hidden", !visible);
+
+  const icon = label.querySelector(":scope > .toggle-icon");
+  if (kw === "") {
+    // 還原：依保留的展開狀態決定收合（不污染 expandedDirs）
+    const expanded = expandedDirs.has(path);
+    childrenWrap.classList.toggle("collapsed", !expanded);
+    if (icon) icon.textContent = expanded ? "▾" : "▸";
+  } else if (visible && anyChild) {
+    // 過濾中且子孫有命中：暫時展開以露出結果
+    childrenWrap.classList.remove("collapsed");
+    if (icon) icon.textContent = "▾";
+  }
+  return visible;
 }
 
 // ===== 建立節點操作按鈕（重新命名 / 刪除 / 在此新增）=====

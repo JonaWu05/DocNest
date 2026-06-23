@@ -60,6 +60,10 @@
           <button class="icon-btn" id="refresh-btn" title="重新整理"><i class="fa fa-refresh"></i></button>
         </div>
       </div>
+      <!-- 檔案樹即時過濾：純客戶端，從已載入的檔案樹篩選，不再向後端要資料 -->
+      <div id="file-search-wrap">
+        <input type="text" id="file-search" class="file-search" placeholder="搜尋檔案…" autocomplete="off" spellcheck="false">
+      </div>
       <div id="file-tree"></div>
       <!-- 文件目錄：依目前文件的標題自動產生，點擊跳轉到對應段落 -->
       <div id="toc-section">
@@ -71,9 +75,14 @@
     <!-- 拖曳調整側欄寬度 -->
     <div id="sidebar-resizer" title="拖曳調整側欄寬度"></div>
 
+    <!-- 行動裝置：抽屜開啟時的半透明遮罩，點擊即收起（顯示與否由 CSS 控制）-->
+    <div id="sidebar-backdrop"></div>
+
     <!-- 右側：工具列 + 內容 -->
     <main id="main">
       <div id="toolbar">
+        <!-- 行動裝置：開關左側檔案樹抽屜（桌面以 CSS 隱藏）-->
+        <button class="icon-btn" id="sidebar-toggle" title="開關側欄"><i class="fa fa-bars"></i></button>
         <span id="current-file"><span id="dirty-dot" class="hidden">●</span><span id="file-name">尚未開啟檔案</span></span>
         <div id="mode-group">
           <button data-mode="preview" class="active" title="預覽 (Ctrl+1)" disabled>預覽</button>
