@@ -45,6 +45,10 @@ type refCacheEntry struct {
 	refs    map[string]bool // 該文件引用的 asset（DOC_ROOT 相對路徑）集合
 }
 
+// maxRefCacheEntries 為來源驗證快取的筆數上限，避免長時間執行下隨被瀏覽過的文件數無限成長。
+// 達上限時整批清空（快取僅為最佳化，未命中只是重讀重解析一份小文件，成本低，毋須 LRU）。
+const maxRefCacheEntries = 512
+
 // New 建立 Files handler 集合。
 func New(st *store.Store, az *authz.Authz, h *hub.Hub, fsync bool) *Files {
 	return &Files{store: st, az: az, hub: h, fsync: fsync, refCache: map[string]refCacheEntry{}}
@@ -500,6 +504,9 @@ func (f *Files) docReferences(absPath, relPath string) (map[string]bool, bool) {
 	refs := extractAssetRefs(string(data), relPath)
 
 	f.refMu.Lock()
+	if len(f.refCache) >= maxRefCacheEntries {
+		f.refCache = make(map[string]refCacheEntry) // 達上限整批清空，控制記憶體
+	}
 	f.refCache[relPath] = refCacheEntry{version: version, refs: refs}
 	f.refMu.Unlock()
 	return refs, true

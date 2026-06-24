@@ -22,7 +22,7 @@ export async function uploadToLibrary(files, dir) {
 }
 
 // ===== 附件庫：目的地資料夾下拉（僅限 assets 樹底下）=====
-export async function populateTargetFolders() {
+async function populateTargetFolders() {
   const prev = assetTarget.value;
   assetTarget.innerHTML = "";
   let folders = ["assets"];
@@ -91,7 +91,7 @@ export function closeAssetModal() {
   assetModal.classList.add("hidden");
 }
 
-export async function loadAssets() {
+async function loadAssets() {
   assetGrid.innerHTML = "";
   assetHint.textContent = "載入中…";
   try {

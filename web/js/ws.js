@@ -92,7 +92,7 @@ export function disconnectWS() {
 }
 
 // 送出一則訊息（連線未開時靜默忽略）
-export function sendWS(type, payload) {
+function sendWS(type, payload) {
   if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type, payload }));
   }

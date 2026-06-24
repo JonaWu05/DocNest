@@ -143,11 +143,6 @@ func (s *Store) RelOf(absPath string) string {
 	return strings.Trim(filepath.ToSlash(rel), "/")
 }
 
-// BuildTree 建立 Root 底下的檔案樹，回傳根節點（其 Children 即頂層項目）。
-func (s *Store) BuildTree() (*FileNode, error) {
-	return buildTree(s.Root, "")
-}
-
 // CachedTree 回傳檔案樹，命中且未逾 TTL 時直接用快取，否則重建。
 //
 // 回傳的樹為「共用唯讀」結構：呼叫端（如權限過濾）不可就地修改其節點，

@@ -78,7 +78,7 @@ function refreshScrollSpy() {
 }
 
 // 點 TOC 項目：捲動預覽到對應標題（編輯模式下先切到分割以顯示預覽）
-export function gotoHeading(i) {
+function gotoHeading(i) {
   if (state.currentMode === "edit") applyMode("split");
   const target = previewPane.querySelector("#toc-h-" + i);
   if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });

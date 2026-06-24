@@ -671,12 +671,6 @@ body.dark .cm-s-easymde .cm-comment {
   color: #6a9955;
 }
 
-/* 拖放上傳時的視覺提示 */
-.drop-active {
-  outline: 2px dashed var(--accent);
-  outline-offset: -6px;
-}
-
 /* ===== 附件庫對話框 ===== */
 .modal-overlay {
   position: fixed;

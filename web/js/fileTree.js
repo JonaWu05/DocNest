@@ -258,7 +258,7 @@ export async function createItem(type, baseDir) {
 }
 
 // ===== 檔案管理：重新命名 / 移動 =====
-export async function renameItem(node) {
+async function renameItem(node) {
   const newPath = await promptModal("請輸入新的路徑（相對於文件根目錄）：", node.path);
   if (!newPath || newPath.trim() === "" || newPath.trim() === node.path) return;
   expandAncestors(newPath.trim()); // 移動後讓目標所在資料夾在重建後可見
@@ -282,7 +282,7 @@ export async function renameItem(node) {
 }
 
 // ===== 檔案管理：刪除 =====
-export async function deleteItem(node) {
+async function deleteItem(node) {
   const label = node.isDir ? "資料夾（含底下所有內容）" : "檔案";
   if (!(await confirmModal("確定要刪除此" + label + "嗎？\n" + node.path, { okText: "刪除" }))) return;
 

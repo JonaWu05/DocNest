@@ -75,7 +75,7 @@ func TestBuildTree(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "ignore.exe")) // 非允許副檔名略過
 	mustWrite(t, filepath.Join(root, ".secret.md")) // 隱藏檔略過
 
-	tree, err := New(root).BuildTree()
+	tree, err := buildTree(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}

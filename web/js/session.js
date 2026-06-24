@@ -53,7 +53,7 @@ async function enterAppWithMe() {
   }
 }
 
-export function logout() {
+function logout() {
   disconnectWS(); // 主動關閉 WebSocket，不再自動重連
   clearToken();
   showLogin();

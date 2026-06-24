@@ -2,7 +2,7 @@
 import { state } from "./state.js";
 
 // 取得目前文件所在的目錄（相對於 DOC_ROOT）
-export function docDir() {
+function docDir() {
   if (!state.currentPath) return "";
   const i = state.currentPath.lastIndexOf("/");
   return i === -1 ? "" : state.currentPath.slice(0, i);
