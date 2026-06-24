@@ -19,3 +19,8 @@ Thumbs.db
 # 上傳的附件（docs/assets/）也一併被涵蓋。
 /docs/*
 !/docs/welcome.md
+
+# Node 相依（即時共編前端打包時的開發相依，非執行期產物）
+/node_modules/
+/package.json
+/package-lock.json

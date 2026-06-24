@@ -31,6 +31,7 @@ import (
 
 	"markdownEditor/internal/auth"
 	"markdownEditor/internal/authz"
+	"markdownEditor/internal/collab"
 	"markdownEditor/internal/config"
 	"markdownEditor/internal/files"
 	"markdownEditor/internal/hub"
@@ -89,6 +90,8 @@ func main() {
 	au := auth.New(cfg, az)
 	h := hub.New(au, az, cfg)
 	go h.Run()
+
+	collabH := collab.New(au, az, cfg) // 即時共編房間層（/ws/collab）
 
 	fileH := files.New(st, az, h, cfg.FsyncOnSave)
 	fileH.StartTrashCleaner(cfg.TrashRetentionDays) // 背景定期清除過期的回收筒項目
@@ -173,6 +176,7 @@ func main() {
 
 	// WebSocket：自行用 query 參數 token 驗證後升級（瀏覽器無法為 WS 帶 Authorization 標頭）
 	r.GET("/ws", h.ServeWs)
+	r.GET("/ws/collab", collabH.ServeWs) // 即時共編（Yjs update / awareness 中繼）
 
 	// ===== 受保護路由（需 JWT）=====
 	api := r.Group("/api")
