@@ -26,7 +26,7 @@ const debouncedPreviewAndTOC = debounce(() => {
 
 // ===== 確保 EasyMDE 已建立 =====
 // EasyMDE 改為延遲載入（見 vendor.js），故本函式為 async：呼叫端需 await 後才可用 state.easyMDE。
-export async function ensureEditor() {
+async function ensureEditor() {
   if (state.easyMDE) return;
   await loadEasyMDE();
   state.easyMDE = new EasyMDE({
@@ -63,9 +63,7 @@ export async function ensureEditor() {
         className: "fa fa-file-text-o",
         title: "插入分頁連結（連到其他文件，點擊可站內轉跳）",
       },
-      "|",
-      "preview", "side-by-side", "fullscreen", "|",
-      "guide",
+      // 已移除 preview / side-by-side / fullscreen（與上方 預覽 / 編輯 / 分割 重複）與 guide
     ],
   });
   // 編輯器內容變更：更新真實來源、標記未儲存、即時刷新分割預覽、排程自動儲存
