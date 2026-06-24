@@ -5,6 +5,7 @@ import { resolveAssetPath } from "./util.js";
 import { rawUrl } from "./auth.js";
 import { openFileByPath } from "./editor.js";
 import { currentTokens } from "./markdown.js";
+import { highlightWithin } from "./highlighter.js";
 
 export function renderPreview() {
   // 先以 marked 轉成 HTML，再經 DOMPurify 消毒後才寫入 DOM。
@@ -43,4 +44,7 @@ export function renderPreview() {
       a.rel = "noopener noreferrer"; // 防 tabnabbing 與 referrer 外洩（連結含 token 的 raw URL）
     }
   });
+  // 程式碼語法高亮（延遲載入 highlight.js；無 code block 則完全不載入）。
+  // 在消毒後才呼叫，著色 span 由已消毒文字產生。
+  highlightWithin(previewPane);
 }
