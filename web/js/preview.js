@@ -47,4 +47,47 @@ export function renderPreview() {
   // 程式碼語法高亮（延遲載入 highlight.js；無 code block 則完全不載入）。
   // 在消毒後才呼叫，著色 span 由已消毒文字產生。
   highlightWithin(previewPane);
+  addCopyButtons(previewPane);
+}
+
+// 為每個程式碼區塊加上右上角「複製」鈕（hover 顯示）。
+function addCopyButtons(container) {
+  container.querySelectorAll("pre").forEach(pre => {
+    const code = pre.querySelector("code");
+    if (!code) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "code-copy-btn";
+    btn.textContent = "複製";
+    btn.addEventListener("click", async () => {
+      const ok = await copyText(code.textContent);
+      btn.textContent = ok ? "已複製" : "複製失敗";
+      btn.classList.toggle("copied", ok);
+      setTimeout(() => { btn.textContent = "複製"; btn.classList.remove("copied"); }, 1500);
+    });
+    pre.appendChild(btn);
+  });
+}
+
+// 複製文字到剪貼簿：優先用 Clipboard API，非安全環境（http 非 localhost）則退回 execCommand。
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) { /* 落到下方備援 */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
 }

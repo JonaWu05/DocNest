@@ -19,6 +19,8 @@ import { closeDocPicker, renderDocList } from "./docPicker.js";
 import { exportPDF } from "./exportPdf.js";
 import { initShortcuts } from "./shortcuts.js";
 import { initSidebarResize } from "./sidebar.js";
+import { initLightbox } from "./lightbox.js";
+import { openTrash, closeTrash } from "./trash.js";
 import { initSession, setEnterAppHandler } from "./session.js";
 import { connectWS, onMessage } from "./ws.js";
 import { handlePresenceUpdate } from "./presence.js";
@@ -57,6 +59,12 @@ previewPane.addEventListener("scroll", syncFromPreview);
 document.getElementById("new-file-btn").addEventListener("click", () => createItem("file"));
 document.getElementById("new-dir-btn").addEventListener("click", () => createItem("dir"));
 
+// 資源回收筒：開啟 / 關閉（點遮罩亦關閉）
+const trashModal = document.getElementById("trash-modal");
+document.getElementById("trash-btn").addEventListener("click", openTrash);
+document.getElementById("trash-close").addEventListener("click", closeTrash);
+trashModal.addEventListener("click", (e) => { if (e.target === trashModal) closeTrash(); });
+
 // 📎 附件：開啟附件庫（可上傳/管理附件，或挑選既有附件插入）
 attachBtn.addEventListener("click", openAssetModal);
 document.getElementById("asset-close").addEventListener("click", closeAssetModal);
@@ -81,7 +89,9 @@ attachInput.addEventListener("change", async () => {
   attachInput.value = ""; // 清空以便重複選同一檔案
 });
 
+autosaveToggle.checked = localStorage.getItem("autosave") === "1"; // 還原上次的自動儲存偏好
 autosaveToggle.addEventListener("change", () => {
+  localStorage.setItem("autosave", autosaveToggle.checked ? "1" : "0");
   if (autosaveToggle.checked && state.isDirty) scheduleAutosave();
 });
 
@@ -105,6 +115,7 @@ window.addEventListener("beforeunload", (e) => {
 
 initShortcuts();
 initSidebarResize(); // 側欄寬度拖曳調整
+initLightbox(); // 預覽圖片點擊放大
 initSync(); // 綁定 file_updated 提示條的載入/忽略按鈕
 
 // 註冊 WebSocket 訊息處理（連線在登入後才建立）
@@ -130,11 +141,18 @@ setEnterAppHandler(async (defaultDoc) => {
       '<p>歡迎使用！</p><p class="empty-state-sub">您目前沒有可存取的文件，請聯絡管理員開通權限。</p></div>';
     return;
   }
-  // 自動開啟首頁文件，但僅在使用者對它有讀取權時（＝它出現在已過濾的檔案樹中）。
-  // 否則維持空白工作區，不嘗試開啟以免跳出 403「開啟失敗」提示。
-  if (defaultDoc) {
-    const readable = document.querySelector('.tree-label[data-path="' + CSS.escape(defaultDoc) + '"]');
-    if (readable) openFileByPath(defaultDoc);
+  // 開啟目標文件，僅在使用者對它有讀取權時（＝它出現在已過濾的檔案樹中）；
+  // 優先還原「上次開啟的檔案」，否則用設定的首頁文件（DEFAULT_DOC）。
+  // 找不到目標時維持空白工作區，不嘗試開啟以免跳出 403「開啟失敗」提示。
+  const inTree = (p) => p && document.querySelector('.tree-label[data-path="' + CSS.escape(p) + '"]');
+  const lastFile = localStorage.getItem("lastFile");
+  // 先讀模式：openFile 內部會呼叫 applyMode("preview")，會把 lastMode 覆寫掉
+  const lastMode = localStorage.getItem("lastMode");
+  const target = inTree(lastFile) ? lastFile : defaultDoc;
+  if (inTree(target)) {
+    await openFileByPath(target);
+    // 只有還原「上次的檔案」時才一併還原上次模式；開首頁文件維持預設預覽
+    if (target === lastFile && lastMode && lastMode !== "preview") applyMode(lastMode);
   }
 });
 

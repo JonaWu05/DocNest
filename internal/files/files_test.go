@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"markdownEditor/internal/authz"
 	"markdownEditor/internal/store"
@@ -130,6 +131,38 @@ func TestExtractAssetRefs(t *testing.T) {
 	}
 	if len(refs) != len(want) {
 		t.Errorf("外部/絕對/錨點連結應被略過，預期 %d 筆，got %d：%v", len(want), len(refs), refs)
+	}
+}
+
+// TestPurgeExpiredTrash 驗證背景清除：刪除時間超過保留期的回收項目會被永久刪除，未過期的保留。
+func TestPurgeExpiredTrash(t *testing.T) {
+	root := t.TempDir()
+	f := New(store.New(root), nil, nil, false) // 清除邏輯不使用 az / hub
+
+	mkEntry := func(id, deletedAt string) {
+		dir := filepath.Join(root, ".trash", id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		meta := `{"original":"notes/a.md","name":"a.md","isDir":false,"deletedAt":"` + deletedAt + `","deletedBy":"x"}`
+		if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(meta), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkEntry("1000000000000000001", time.Now().Add(-20*24*time.Hour).Format(time.RFC3339)) // 過期
+	mkEntry("1000000000000000002", time.Now().Add(-1*24*time.Hour).Format(time.RFC3339))  // 未過期
+
+	if removed := f.purgeExpiredTrash(15 * 24 * time.Hour); removed != 1 {
+		t.Fatalf("應清除 1 筆過期項目，got %d", removed)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".trash", "1000000000000000001")); !os.IsNotExist(err) {
+		t.Error("過期項目應被永久刪除")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".trash", "1000000000000000002")); err != nil {
+		t.Error("未過期項目應保留")
 	}
 }
 

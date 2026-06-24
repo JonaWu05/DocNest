@@ -57,6 +57,7 @@
         <div id="sidebar-actions">
           <button class="icon-btn" id="new-file-btn" title="新增檔案"><i class="fa fa-file-o"></i></button>
           <button class="icon-btn" id="new-dir-btn" title="新增資料夾"><i class="fa fa-folder-o"></i></button>
+          <button class="icon-btn" id="trash-btn" title="資源回收筒"><i class="fa fa-trash-o"></i></button>
           <button class="icon-btn" id="refresh-btn" title="重新整理"><i class="fa fa-refresh"></i></button>
         </div>
       </div>
@@ -159,6 +160,18 @@
         <input type="text" id="doc-search" class="doc-search" placeholder="搜尋文件名稱或路徑…">
       </div>
       <div class="doc-list" id="doc-list"></div>
+    </div>
+  </div>
+
+  <!-- 資源回收筒：列出已刪除項目，可還原或永久刪除 -->
+  <div id="trash-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span>資源回收筒</span>
+        <button class="icon-btn" id="trash-close" title="關閉"><i class="fa fa-times"></i></button>
+      </div>
+      <div class="modal-subtoolbar"><span id="trash-hint"></span></div>
+      <div class="doc-list" id="trash-list"></div>
     </div>
   </div>
 

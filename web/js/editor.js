@@ -117,6 +117,7 @@ export async function applyMode(mode) {
     setTimeout(() => state.easyMDE.codemirror.refresh(), 0);
   }
   buildTOC(); // 切換模式後同步更新目錄
+  localStorage.setItem("lastMode", mode); // 記住模式，下次開啟同一檔時還原
   // 通知其他人我目前的狀態（編輯與分割皆視為編輯中）
   sendPresence(state.currentPath, mode !== "preview");
 }
@@ -140,6 +141,7 @@ export async function saveFile(silent, force) {
   if (state.currentMode !== "preview" && state.easyMDE) state.currentContent = state.easyMDE.value();
 
   saveBtn.disabled = true;
+  saveBtn.textContent = "儲存中…"; // 慢網路時給明確進度回饋
   try {
     const url = API_BASE + "/api/file?path=" + encodeURIComponent(state.currentPath) + (force ? "&force=1" : "");
     const headers = { "Content-Type": "text/plain; charset=utf-8" };
@@ -159,6 +161,7 @@ export async function saveFile(silent, force) {
     showToast("儲存失敗：" + err.message, "error");
   } finally {
     saveBtn.disabled = false;
+    saveBtn.textContent = "儲存";
   }
 }
 
@@ -186,6 +189,7 @@ export async function openFile(path, labelEl) {
     state.currentContent = text;
     state.currentVersion = res.headers.get("X-File-Version"); // 樂觀鎖基準版本
     setDirty(false);
+    localStorage.setItem("lastFile", path); // 記住最後開啟的檔案，下次登入自動還原
 
     // 若編輯器已建立，先把內容同步到新檔。否則切換檔案時 applyMode 仍處於上一個檔的
     // 編輯模式，會把編輯器內殘留的舊檔內容誤撈回 currentContent，導致新檔顯示／存成舊檔內容。
@@ -212,7 +216,7 @@ export async function openFile(path, labelEl) {
 
 export function openFileByPath(path) {
   const label = document.querySelector('.tree-label[data-path="' + CSS.escape(path) + '"]');
-  openFile(path, label);
+  return openFile(path, label);
 }
 
 export function resetWorkspace() {

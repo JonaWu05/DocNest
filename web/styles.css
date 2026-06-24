@@ -382,6 +382,31 @@ body.resizing-sidebar {
 #preview-pane img {
   max-width: 100%;
   border-radius: 6px;
+  cursor: zoom-in; /* 提示可點擊放大（被連結包住的圖仍走連結） */
+}
+
+/* 圖片放大檢視（lightbox）：全螢幕半透明遮罩 + 置中大圖 */
+#lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.85);
+  cursor: zoom-out;
+}
+
+#lightbox.hidden {
+  display: none;
+}
+
+#lightbox img {
+  max-width: 96vw;
+  max-height: 92vh;
+  border-radius: 4px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
 }
 
 #preview-pane a {
@@ -412,6 +437,42 @@ body.resizing-sidebar {
 #preview-pane pre code {
   background: none;
   padding: 0;
+}
+
+/* 程式碼區塊「複製」鈕：hover 時於右上角顯示 */
+#preview-pane pre {
+  position: relative;
+}
+
+.code-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  background: var(--btn-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+#preview-pane pre:hover .code-copy-btn {
+  opacity: 1;
+}
+
+.code-copy-btn.copied {
+  color: #19be6b;
+  border-color: #19be6b;
+}
+
+/* 觸控裝置沒有 hover，固定顯示 */
+@media (hover: none) {
+  .code-copy-btn {
+    opacity: 1;
+  }
 }
 
 #preview-pane blockquote {
@@ -888,6 +949,47 @@ body.dark .cm-s-easymde .cm-comment {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ===== 資源回收筒清單 ===== */
+.trash-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.trash-item-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.trash-item-name {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-item-path {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-item-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.trash-item-actions .tool-btn {
+  padding: 4px 10px;
+  font-size: 13px;
 }
 
 .asset-size {

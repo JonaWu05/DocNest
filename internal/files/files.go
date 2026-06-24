@@ -270,26 +270,30 @@ func (f *Files) DeleteFile(c *gin.Context) {
 		return
 	}
 
-	if info.IsDir() {
-		if err := os.RemoveAll(absPath); err != nil {
-			httpx.ServerError(c, "刪除資料夾失敗", err)
-			return
-		}
-	} else {
+	if !info.IsDir() {
 		// 允許刪除文件（.md/.txt）以及已上傳的圖片/附件
 		ext := strings.ToLower(filepath.Ext(absPath))
 		if !store.IsAllowedFile(absPath) && !store.IsAllowedUpload(ext) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "不支援的檔案類型"})
 			return
 		}
-		if err := os.Remove(absPath); err != nil {
-			httpx.ServerError(c, "刪除檔案失敗", err)
-			return
-		}
 	}
 
-	f.invalidateFor(f.store.RelOf(absPath))
-	c.JSON(http.StatusOK, gin.H{"message": "刪除成功"})
+	rel := f.store.RelOf(absPath)
+	// 回收筒內容不可經一般刪除端點再次刪除（請改用回收筒的還原 / 永久刪除）
+	if underTrash(rel) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "不可直接刪除回收筒內容"})
+		return
+	}
+
+	// 軟刪除：移入 .trash，可從資源回收筒還原
+	if err := f.moveToTrash(absPath, rel, authz.SubjectOf(c), info.IsDir()); err != nil {
+		httpx.ServerError(c, "移至回收筒失敗", err)
+		return
+	}
+
+	f.invalidateFor(rel)
+	c.JSON(http.StatusOK, gin.H{"message": "已移至回收筒"})
 }
 
 // Create 處理 POST /api/create?path=xxx&type=file|dir：新增檔案或資料夾。

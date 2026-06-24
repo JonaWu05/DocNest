@@ -44,6 +44,10 @@ type Config struct {
 	// CookieSecure：OAuth state 等 cookie 是否帶 Secure 旗標。正式環境（https）應設 true。
 	// 反向代理終止 TLS 時 c.Request.TLS 為 nil，無法自動判斷，故以設定驅動。
 	CookieSecure bool
+
+	// TrashRetentionDays：資源回收筒項目保留天數，超過則由背景排程自動永久刪除。
+	// 預設 15；設為 0（或負數）代表停用自動清除（永久保留，由使用者自行清理）。
+	TrashRetentionDays int
 }
 
 // Load 從環境變數建立設定。JWT_SECRET 為必填，缺少則直接中止啟動。
@@ -117,6 +121,14 @@ func Load() *Config {
 	c.PermissionsFile = strings.TrimSpace(os.Getenv("PERMISSIONS_FILE"))
 	if c.PermissionsFile == "" {
 		c.PermissionsFile = "./permissions.json"
+	}
+
+	// 資源回收筒保留天數：預設 15；明確設為 0 可停用自動清除。非法值維持預設。
+	c.TrashRetentionDays = 15
+	if v := os.Getenv("TRASH_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			c.TrashRetentionDays = n
+		}
 	}
 
 	// 存檔刷盤：預設關閉，僅在明確設為 true/1 時開啟。

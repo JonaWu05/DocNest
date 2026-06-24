@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
@@ -90,6 +91,7 @@ func main() {
 	go h.Run()
 
 	fileH := files.New(st, az, h, cfg.FsyncOnSave)
+	fileH.StartTrashCleaner(cfg.TrashRetentionDays) // 背景定期清除過期的回收筒項目
 	uploadH := upload.New(st, az)
 
 	// ===== gin 路由器 =====
@@ -115,6 +117,19 @@ func main() {
 		corsConfig.AllowOrigins = cfg.AllowedOrigins
 	}
 	r.Use(cors.New(corsConfig))
+
+	// 回應壓縮：壓 HTML / JS / CSS / JSON，大幅減少傳輸量（vendor JS 如 highlight.js、EasyMDE 特別有感）。
+	//   - 排除 /ws：WebSocket 升級不可被壓縮包裝。
+	//   - 排除 /api/raw：服務圖片 / PDF / 附件等二進位（多已壓縮），且需支援 Range 請求。
+	//   - 排除已壓縮的副檔名：圖片、字型、壓縮檔。
+	r.Use(gzip.Gzip(gzip.DefaultCompression,
+		gzip.WithExcludedPaths([]string{"/ws", "/api/raw"}),
+		gzip.WithExcludedExtensions([]string{
+			".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+			".woff", ".woff2", ".ttf", ".eot", ".otf",
+			".zip", ".gz", ".pdf",
+		}),
+	))
 
 	// 靜態資源快取策略：
 	//   1. /static/vendor/*（pinned 版本的第三方函式庫）：長快取 + immutable。
@@ -171,6 +186,10 @@ func main() {
 		api.DELETE("/file", fileH.DeleteFile)
 		api.POST("/create", fileH.Create)
 		api.POST("/rename", fileH.Rename)
+		// 資源回收筒：列出 / 還原 / 永久刪除
+		api.GET("/trash", fileH.ListTrash)
+		api.POST("/trash/restore", fileH.RestoreTrash)
+		api.DELETE("/trash", fileH.PurgeTrash)
 		api.GET("/raw", fileH.Raw)
 		api.POST("/upload", uploadH.UploadFile)
 		api.GET("/assets", uploadH.ListAssets)

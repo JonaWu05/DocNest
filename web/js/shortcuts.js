@@ -4,6 +4,9 @@ import { assetModal, docModal } from "./dom.js";
 import { applyMode, saveFile } from "./editor.js";
 import { closeAssetModal } from "./assets.js";
 import { closeDocPicker } from "./docPicker.js";
+import { closeTrash } from "./trash.js";
+
+const trashModal = document.getElementById("trash-modal");
 
 // 用 capture 階段攔截，確保比 CodeMirror 與瀏覽器預設行為先處理
 export function initShortcuts() {
@@ -23,6 +26,7 @@ export function initShortcuts() {
     if (e.key === "Escape") {
       if (!assetModal.classList.contains("hidden")) closeAssetModal();
       else if (!docModal.classList.contains("hidden")) closeDocPicker();
+      else if (!trashModal.classList.contains("hidden")) closeTrash();
       else document.body.classList.remove("sidebar-open"); // 收起行動裝置抽屜（桌面無此 class，無作用）
     }
   }, true);

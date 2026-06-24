@@ -284,7 +284,7 @@ async function renameItem(node) {
 // ===== 檔案管理：刪除 =====
 async function deleteItem(node) {
   const label = node.isDir ? "資料夾（含底下所有內容）" : "檔案";
-  if (!(await confirmModal("確定要刪除此" + label + "嗎？\n" + node.path, { okText: "刪除" }))) return;
+  if (!(await confirmModal("確定要刪除此" + label + "嗎？可從資源回收筒還原。\n" + node.path, { okText: "刪除" }))) return;
 
   try {
     const res = await authFetch(
@@ -292,7 +292,7 @@ async function deleteItem(node) {
       { method: "DELETE" }
     );
     await ensureOk(res);
-    showToast("刪除成功", "success");
+    showToast("已移至回收筒", "success");
     if (state.currentPath === node.path) resetWorkspace();
     await loadFileTree();
   } catch (err) {
