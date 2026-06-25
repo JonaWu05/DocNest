@@ -8,16 +8,20 @@ function docDir() {
   return i === -1 ? "" : state.currentPath.slice(0, i);
 }
 
-// 將「文件相對路徑」解析成「DOC_ROOT 相對路徑」；外部連結則回傳 null（不改寫）
+// 將「文件相對路徑」解析成「DOC_ROOT 相對路徑」；外部連結則回傳 null（不改寫）。
+// 輸入來自 marked 的 img src / a href，marked 會將非 ASCII 字元 percent-encode（如中文 → %E6…），
+// 故逐段 decodeURIComponent 還原成字面路徑，否則交給 rawUrl 的 encodeURIComponent 會雙重編碼而 404。
 export function resolveAssetPath(src) {
   if (!src) return null;
   if (/^(https?:|data:|#|mailto:)/i.test(src) || src.startsWith("/")) return null;
+  const decode = (s) => { try { return decodeURIComponent(s); } catch (e) { return s; } };
   const parts = (docDir() ? docDir().split("/") : []).concat(src.split("/"));
   const stack = [];
   for (const p of parts) {
-    if (p === "" || p === ".") continue;
-    if (p === "..") { stack.pop(); continue; }
-    stack.push(p);
+    const seg = decode(p);
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") { stack.pop(); continue; }
+    stack.push(seg);
   }
   return stack.join("/");
 }
