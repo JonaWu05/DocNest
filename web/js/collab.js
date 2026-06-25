@@ -5,7 +5,7 @@
 //
 // 邊界(本期):僅對「可寫檔案」於編輯/分割模式啟用;唯讀檔仍走既有靜態讀檔路徑。
 import { getToken } from "./auth.js";
-import { state } from "./state.js";
+import { state, API_BASE } from "./state.js";
 
 // 二進位 frame 第 1 個位元組為 tag,其後為負載(與後端 internal/collab 對齊)。
 const TAG_UPDATE = 0x75; // 'u' Yjs 文件 update
@@ -15,6 +15,8 @@ const TAG_CONTROL = 0x63; // 'c' 控制訊息(JSON)
 
 const SAVE_DELAY = 1500; // saver 落檔的 debounce 間隔(毫秒),比照 autosave
 const AWARENESS_HEARTBEAT = 10000; // awareness 心跳間隔(毫秒):多人時定期重送,維持存活並讓晚加入者看到游標
+const RECONNECT_BASE = 1000; // 共編 WS 重連退避起始延遲(毫秒)
+const RECONNECT_MAX = 30000; // 共編 WS 重連退避上限(毫秒)
 
 // 游標配色:依使用者名稱雜湊到固定色盤,讓同一人每次都同色、彼此易辨識。
 const USER_COLORS = ["#1f8a70", "#d1495b", "#3d7ea6", "#b8860b", "#7b5cd6", "#c2410c", "#0e7490", "#9d174d"];
@@ -121,13 +123,14 @@ function sendAwareness(clients) {
 
 // seedFromText 由本客戶端以 .md 內容初始化共享文件(僅伺服器指派的 seeder 執行)。
 // 以非 "remote" 的 origin 進行,使其產生的 update 會被上傳給伺服器存入 log 並廣播給他人。
+//
+// 關鍵:只在「本地文件還是空的」時才插入。若文件已有內容(晚加入者已透過回放/同步取得內容,
+// 或斷線重連後本地 Y.Doc 仍保有內容),再插入會與既有內容形成不同 lineage 而重複(文字接在底下)。
+// 不可改用「我有沒有 seed 過」判斷:joiner 從沒呼叫過本函式,卻已持有內容。
 function seedFromText(seedText) {
-  if (session.seeded || !seedText) {
-    session.seeded = true;
-    return;
-  }
-  session.doc.transact(() => session.text.insert(0, seedText), "seed");
   session.seeded = true;
+  if (session.text.length > 0 || !seedText) return;
+  session.doc.transact(() => session.text.insert(0, seedText), "seed");
 }
 
 // handleControl 處理伺服器送來的控制訊息(init / role)。
@@ -138,6 +141,12 @@ function handleControl(msg) {
     if (msg.seed) seedFromText(session.seedText);
     ensureBinding();
     if (session.markReady) session.markReady(); // 綁定完成,通知 connectCollab 可解除唯讀
+    // 重連:把離線期間的本地編輯推回伺服器(server 視為新加入,log 可能落後或為空),並重新宣告游標。
+    if (session.connectedOnce && session.streaming) {
+      sendFullState(TAG_UPDATE);
+      sendAwareness([session.doc.clientID]);
+    }
+    session.connectedOnce = true;
   } else if (msg.type === "role") {
     // saver 移交:成為新 saver,必要時補做 seed
     session.isSaver = !!msg.saver;
@@ -210,6 +219,9 @@ export async function connectCollab(path, cm, opts) {
     saveTimer: null,
     pendingSave: false,
     heartbeatTimer: null,
+    reconnectTimer: null,
+    reconnectAttempts: 0,
+    connectedOnce: false, // 是否已成功連過(用於分辨首次連線與重連)
     canWrite: !!opts.canWrite,
     seedText: opts.seedText || "",
     onContentChange: opts.onContentChange,
@@ -253,18 +265,50 @@ export async function connectCollab(path, cm, opts) {
   }, AWARENESS_HEARTBEAT);
 
   // 綁定延後到收到 init 後(見 ensureBinding),避免可寫檔進編輯時的內容閃爍。
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  const token = getToken();
-  const url = `${proto}://${location.host}/ws/collab?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
-  const ws = new WebSocket(url);
-  ws.binaryType = "arraybuffer";
-  session.ws = ws;
-  ws.addEventListener("message", (ev) => {
-    if (session === mySession) handleMessage(new Uint8Array(ev.data));
-  });
+  openSocket(mySession);
 
   await ready; // 等綁定完成再回傳,呼叫端才解除唯讀
 }
+
+// openSocket 建立(或重建)房間的 WebSocket。斷線時以指數退避自動重連;
+// 重連後伺服器重新送 init,由 handleControl 把離線期間的本地編輯推回(見上)。
+function openSocket(s) {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const url = `${proto}://${location.host}/ws/collab?path=${encodeURIComponent(s.path)}&token=${encodeURIComponent(getToken())}`;
+  const ws = new WebSocket(url);
+  ws.binaryType = "arraybuffer";
+  s.ws = ws;
+  ws.addEventListener("open", () => {
+    if (session === s) s.reconnectAttempts = 0; // 連上即重置退避
+  });
+  ws.addEventListener("message", (ev) => {
+    if (session === s) handleMessage(new Uint8Array(ev.data));
+  });
+  ws.addEventListener("close", () => {
+    if (session === s) scheduleReconnect(s); // 仍是目前房間才重連(已切換/關閉則作罷)
+  });
+}
+
+// scheduleReconnect 以指數退避(1s、2s、4s…上限 30s)排程重連。
+function scheduleReconnect(s) {
+  if (s.reconnectTimer) return;
+  const delay = Math.min(RECONNECT_MAX, RECONNECT_BASE * 2 ** s.reconnectAttempts);
+  s.reconnectAttempts++;
+  s.reconnectTimer = setTimeout(() => {
+    s.reconnectTimer = null;
+    if (session === s) openSocket(s);
+  }, delay);
+}
+
+// flushBeacon 在分頁關閉 / 隱藏時,以 sendBeacon 把 saver 尚未落檔的內容送出(unload 期間 fetch 不可靠)。
+// 帶 force 略過樂觀鎖(與 saver 正常落檔一致),token 走 query(beacon 無法設標頭)。
+function flushBeacon() {
+  if (!session || !session.isSaver || !session.pendingSave) return;
+  const url = `${API_BASE}/api/file?path=${encodeURIComponent(session.path)}&token=${encodeURIComponent(getToken())}&force=1`;
+  navigator.sendBeacon(url, new Blob([session.text.toString()], { type: "text/plain; charset=utf-8" }));
+  session.pendingSave = false;
+}
+if (typeof window !== "undefined") window.addEventListener("pagehide", flushBeacon);
 
 // disconnectCollab 收掉目前的共編房間(切檔、關檔、登出時呼叫)。
 export function disconnectCollab() {
@@ -273,6 +317,7 @@ export function disconnectCollab() {
   const s = session;
   session = null; // 先清空,讓後續遲到的回呼/事件變成 no-op
   clearTimeout(s.saveTimer);
+  clearTimeout(s.reconnectTimer);
   clearInterval(s.heartbeatTimer);
   // 收尾前把尚未落檔的內容存下(僅 saver 且確有待存),避免切檔/關檔遺失最後 1.5 秒的編輯。
   if (s.pendingSave && s.isSaver && s.onSaveRequest) s.onSaveRequest(s.text.toString());

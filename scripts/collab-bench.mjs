@@ -61,6 +61,7 @@ class Client {
     this.text = this.doc.getText("content");
     this.isSaver = false;
     this.streaming = false;
+    this.connectedOnce = false; // 分辨首次連線與重連(重連時補送完整狀態)
     this.seedText = "";
     // awareness（M3）僅在需要的情境啟用，避免干擾情境 1–4 的位元組量測。
     this.aw = opts.awareness ? new Awareness(this.doc) : null;
@@ -145,9 +146,14 @@ class Client {
     if (msg.type === "init") {
       this.isSaver = !!msg.saver;
       this.streaming = !!msg.stream;
-      if (msg.seed && this.seedText) this.doc.transact(() => this.text.insert(0, this.seedText), "seed");
+      this.lastInitSeed = !!msg.seed; // 記錄這次 init 是否被要求 seed(供測試驗證復現條件)
+      // 只在本地還是空的時候才 seed(鏡像 collab.js 修正:避免 joiner/重連時重複插入內容)
+      if (msg.seed && this.seedText && this.text.length === 0) this.doc.transact(() => this.text.insert(0, this.seedText), "seed");
       this._inited_done = true;
       this._inited();
+      // 重連:把離線期間的本地編輯推回伺服器(鏡像 collab.js 的重連補齊)
+      if (this.connectedOnce && this.streaming) this._send(TAG_UPDATE, Y.encodeStateAsUpdate(this.doc));
+      this.connectedOnce = true;
     } else if (msg.type === "stream") {
       this.streaming = !!msg.stream;
       if (msg.stream && msg.sendState) this._send(TAG_UPDATE, Y.encodeStateAsUpdate(this.doc));
@@ -160,15 +166,22 @@ class Client {
     }
   }
 
-  // 模擬連續打字:每字一次 insert(對應一個 Yjs update)。
-  type(n, delayMs = 0) {
+  // 模擬連續打字:每字一次 insert(對應一個 Yjs update);ch 可指定字元以辨識來源。
+  type(n, delayMs = 0, ch = "x") {
     this.typing = true;
     return (async () => {
       for (let i = 0; i < n; i++) {
-        this.text.insert(this.text.length, "x");
+        this.text.insert(this.text.length, ch);
         if (delayMs) await sleep(delayMs);
       }
     })();
+  }
+
+  // 模擬斷線重連:關掉現有 ws,重開連線(沿用同一 Y.Doc),鏡像 collab.js 行為。
+  async reconnect() {
+    if (this.ws) this.ws.close();
+    await sleep(60);
+    await this.connect();
   }
 
   close() {
@@ -290,6 +303,63 @@ async function main() {
     const removed = a.peerName(b.doc.clientID) == null;
     console.log(`    B 離開後 A 端移除 B 的游標 = ${removed}  ${ok(removed)}\n`);
     a.close();
+    await sleep(50);
+  }
+
+  // ── 量測6:M4 斷線重連 + 雙向離線編輯補齊 ──────────────────────
+  {
+    const path = "bench/reconnect.md";
+    const a = new Client(path, "A");
+    await a.connect();
+    const b = new Client(path, "B");
+    await b.connect();
+    await sleep(150);
+    a.typing = b.typing = true;
+
+    await a.type(5, 0, "x"); // A 打 5 個 x，B 應收到
+    await sleep(150);
+
+    b.ws.close(); // B 斷線
+    await sleep(100);
+    await a.type(5, 0, "x"); // 斷線期間：A 再打 5 個 x（B 收不到）
+    await b.type(3, 0, "y"); // 斷線期間：B 離線打 3 個 y（A 收不到）
+    await sleep(100);
+
+    await b.reconnect(); // B 重連 → 應把離線的 y 推回、並補到 A 的 x
+    await sleep(400);
+
+    const sa = a.text.toString(), sb = b.text.toString();
+    const converged = sa === sb;
+    const full = sa.length === 13 && sa.includes("y") && (sa.match(/x/g) || []).length === 10;
+    console.log("【6】M4 斷線重連 + 雙向離線編輯補齊");
+    console.log(`    重連後 A/B 內容一致 = ${a.text.length}/${b.text.length} 字  ${ok(converged)}`);
+    console.log(`    含雙方離線編輯(10 x + 3 y) = ${ok(full)}`);
+    console.log(`    內容 = ${JSON.stringify(sa)}\n`);
+    a.close(); b.close();
+    await sleep(50);
+  }
+
+  // ── 量測7:重連不重複 seed(復現並驗證「文件被複製」的修正)──────────
+  {
+    const path = "bench/reseed.md";
+    const c = new Client(path, "C");
+    c.seedText = "hello world\n第二行內容"; // 模擬 .md 內容
+    await c.connect(); // 首位寫入者 → server 要求 seed → 插入內容
+    await sleep(150);
+    const afterSeed = c.text.toString();
+
+    // C 為單人,斷線後房間在 server 端回收;重連時又成為新房間首位寫入者 → server 再次要求 seed。
+    // 修正前:會把 .md 內容再插一次 → 變兩份;修正後:本地已有內容 → 跳過,不重複。
+    await c.reconnect();
+    await sleep(300);
+    const afterReconnect = c.text.toString();
+
+    const noDup = afterReconnect === afterSeed;
+    console.log("【7】M4 重連不重複 seed(修正「文件被複製」)");
+    console.log(`    重連時 server 要求 seed = ${c.lastInitSeed}（true 才代表有復現到 bug 條件）`);
+    console.log(`    seed 後 ${afterSeed.length} 字、重連後 ${afterReconnect.length} 字  ${ok(noDup)}`);
+    console.log(`    內容 = ${JSON.stringify(afterReconnect)}\n`);
+    c.close();
     await sleep(50);
   }
 
