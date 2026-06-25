@@ -201,6 +201,7 @@ function handleControl(msg) {
     sendControl({ type: "hello", clientId: session.doc.clientID });
     updateLocalUser(); // 反映落檔者身分到 awareness,並觸發房內參與者清單更新
     emitPresence();
+    if (msg.external) enterExternalState(); // 接手 / 重連即為 saver,且房間有未處理的外部改檔
     if (session.markReady) session.markReady(); // 綁定完成,通知 connectCollab 可解除唯讀
     // 重連:把離線期間的本地編輯推回伺服器(server 視為新加入,log 可能落後或為空),並重新宣告游標。
     if (session.connectedOnce && session.streaming) {
@@ -213,6 +214,7 @@ function handleControl(msg) {
     session.isSaver = !!msg.saver;
     if (msg.seed) seedFromText(session.seedText);
     updateLocalUser(); // 落檔者身分變更,同步到 awareness 讓全房可見
+    if (msg.external) enterExternalState(); // 接手成為 saver 且房間有未處理的外部改檔 → 出橫幅(下方 scheduleSaverSave 因待決而成 no-op)
     if (session.isSaver) scheduleSaverSave(); // 接手後盡快把目前狀態落檔
   } else if (msg.type === "stream") {
     // 串流切換(最佳化 B):多人時開始上傳;單人時停止(本機累積)。
@@ -226,19 +228,25 @@ function handleControl(msg) {
     // 不必枯等 y-protocols 30s 逾時(否則快速 F5 會在房內堆積 ghost)。origin "remote" 避免回送。
     if (msg.clientId) mod.removeAwarenessStates(session.awareness, [msg.clientId], "remote");
   } else if (msg.type === "external") {
-    // 磁碟上的 .md 被外部改寫。僅落檔者需處理(其餘人的編輯本就走 CRDT,由 saver 決定如何與磁碟協調)。
-    // 暫停自動落檔避免靜默覆蓋,出橫幅讓 saver 二選一(見 collabResolveKeepMine / collabResolveUseDisk)。
-    if (!session.isSaver) return;
-    session.externalChanged = true;
-    clearTimeout(session.saveTimer); // 取消已排程的落檔
-    if (externalHandler) externalHandler(true);
+    enterExternalState();
   }
+}
+
+// enterExternalState 進入「外部改檔待決」:磁碟上的 .md 被外部改寫,僅落檔者需處理
+// (其餘人的編輯本就走 CRDT,由 saver 決定如何與磁碟協調)。暫停自動落檔避免靜默覆蓋,出橫幅讓 saver 二選一。
+// 由三處觸發:external 控制訊息(當下的 saver)、init / role 帶 external 旗標(接手 / 重連 / 加入成為 saver)。
+function enterExternalState() {
+  if (!session || !session.isSaver) return;
+  session.externalChanged = true;
+  clearTimeout(session.saveTimer); // 取消已排程的落檔
+  if (externalHandler) externalHandler(true);
 }
 
 // collabResolveKeepMine 由橫幅「保留共編版本」呼叫:恢復落檔,以目前共編內容覆蓋磁碟上的外部變更。
 export function collabResolveKeepMine() {
   if (!session || !session.isSaver) return;
   session.externalChanged = false;
+  sendControl({ type: "extResolved" }); // 告知伺服器已處理,後續 saver 移交不再重複出橫幅
   scheduleSaverSave(); // 立即(debounce)落檔
 }
 
@@ -247,6 +255,7 @@ export function collabResolveKeepMine() {
 export function collabResolveUseDisk(diskText) {
   if (!session || !session.isSaver) return;
   session.externalChanged = false;
+  sendControl({ type: "extResolved" }); // 告知伺服器已處理
   session.doc.transact(() => {
     session.text.delete(0, session.text.length);
     if (diskText) session.text.insert(0, diskText);

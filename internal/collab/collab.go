@@ -57,6 +57,7 @@ type room struct {
 	seeded      bool     // 是否已由某客戶端用 .md 內容初始化
 	saver       *client  // 負責落檔的客戶端（可寫者其一）
 	compactMark int      // 壓縮請求當下的 log 長度（-1 表無待處理）；快照到達時保留其後新進的 update
+	extPending  bool     // 偵測到外部改檔且 saver 尚未決定如何處理：saver 移交 / 加入 / 重連時告知新 saver
 }
 
 type client struct {
@@ -73,8 +74,8 @@ type client struct {
 }
 
 // controlMsg 為共編控制訊息（以 tagControl 前綴的 JSON）。
-// 伺服器→客戶端："init" | "role" | "stream" | "compact" | "peerLeft"；
-// 客戶端→伺服器："hello"（登記自己的 Yjs awareness clientID，供離線時通知他人移除游標）。
+// 伺服器→客戶端："init" | "role" | "stream" | "compact" | "peerLeft" | "external"；
+// 客戶端→伺服器："hello"（登記 Yjs awareness clientID）| "extResolved"（saver 已處理外部改檔）。
 type controlMsg struct {
 	Type      string `json:"type"`
 	Seed      bool   `json:"seed,omitempty"`      // 是否由你以 .md 內容初始化文件
@@ -83,6 +84,7 @@ type controlMsg struct {
 	Stream    bool   `json:"stream,omitempty"`    // 是否應上傳本地 update（init / stream）
 	SendState bool   `json:"sendState,omitempty"` // 是否需立即送出完整狀態（單人→多人時補餵新加入者）
 	ClientID  int64  `json:"clientId,omitempty"`  // Yjs awareness clientID（hello 登記 / peerLeft 通知移除）
+	External  bool   `json:"external,omitempty"`  // 有未處理的外部改檔（init / role 告知接手的 saver 出橫幅）
 }
 
 // New 建立 collab Hub。
@@ -192,7 +194,8 @@ func (h *Hub) addClient(path string, cl *client) (initMsg []byte, replay [][]byt
 		}
 	}
 
-	initMsg, _ = json.Marshal(controlMsg{Type: "init", Seed: seed, CanWrite: cl.canWrite, Saver: r.saver == cl, Stream: stream})
+	// 接手為 saver 且房間有未處理的外部改檔（前一個 saver 離開時尚未決定）→ 一併告知，讓新 saver 出橫幅。
+	initMsg, _ = json.Marshal(controlMsg{Type: "init", Seed: seed, CanWrite: cl.canWrite, Saver: r.saver == cl, Stream: stream, External: r.saver == cl && r.extPending})
 	replay = make([][]byte, len(r.log))
 	copy(replay, r.log)
 	return initMsg, replay
@@ -219,6 +222,8 @@ func (h *Hub) NotifyExternalChange(path string) {
 	if r == nil {
 		return
 	}
+	// 記住「有未處理的外部改檔」：若 saver 在決定前離開，移交時告知新 saver（見 removeClient / addClient）。
+	r.extPending = true
 	f := ctrlFrame(controlMsg{Type: "external"})
 	for c := range r.clients {
 		c.trySend(f)
@@ -265,11 +270,21 @@ func (h *Hub) handleFrame(cl *client, data []byte) {
 		// awareness 不需保存（即時狀態），僅轉發
 		h.broadcastLocked(r, cl, frame(tagAwareness, payload))
 	case tagControl:
-		// 客戶端目前僅送 "hello"：登記自己的 Yjs clientID，供離線時通知他人移除其殘留游標。
 		var m controlMsg
-		if json.Unmarshal(payload, &m) == nil && m.Type == "hello" {
+		if json.Unmarshal(payload, &m) != nil {
+			return
+		}
+		switch m.Type {
+		case "hello":
+			// 登記自己的 Yjs clientID，供離線時通知他人移除其殘留游標。
 			cl.yjsID = m.ClientID
 			cl.hasYjsID = true
+		case "extResolved":
+			// saver 已決定如何處理外部改檔（保留共編 / 改用磁碟）→ 清除待處理旗標，
+			// 之後的 saver 移交不再重複出橫幅。僅採信目前的 saver。
+			if cl == r.saver {
+				r.extPending = false
+			}
 		}
 	}
 }
@@ -324,7 +339,9 @@ func (h *Hub) removeClient(cl *client) {
 		for c := range r.clients {
 			if c.canWrite {
 				r.saver = c
-				c.trySend(ctrlFrame(controlMsg{Type: "role", Saver: true, Seed: !r.seeded}))
+				// 帶上 extPending：前一個 saver 在決定如何處理外部改檔前離開時，由新 saver 接手出橫幅，
+				// 避免新 saver 不知情而以共編內容靜默覆蓋外部變更。
+				c.trySend(ctrlFrame(controlMsg{Type: "role", Saver: true, Seed: !r.seeded, External: r.extPending}))
 				break
 			}
 		}

@@ -32,6 +32,23 @@ func drainControl(c *client, typ string) bool {
 
 func newHub() *Hub { return &Hub{rooms: map[string]*room{}} }
 
+// findControl 取出 c.send 中第一則指定 type 的控制訊息並回傳其內容；找不到回傳 ok=false。
+func findControl(c *client, typ string) (controlMsg, bool) {
+	for {
+		select {
+		case b := <-c.send:
+			if len(b) > 0 && b[0] == tagControl {
+				var m controlMsg
+				if json.Unmarshal(b[1:], &m) == nil && m.Type == typ {
+					return m, true
+				}
+			}
+		default:
+			return controlMsg{}, false
+		}
+	}
+}
+
 // 從 client 的 send 取一則 frame；無訊息則 fail。
 func recvFrame(t *testing.T, c *client) []byte {
 	t.Helper()
@@ -219,5 +236,57 @@ func TestLogCompaction(t *testing.T) {
 	}
 	if len(r.log) == 0 || string(r.log[0]) != "SNAPSHOT" {
 		t.Errorf("壓縮後 log[0] 應為快照，got %v", r.log)
+	}
+}
+
+// TestExternalPendingHandoff：外部改檔待處理期間 saver 離開→移交給新 saver 的 role 應帶 External；
+// 新 saver 送 extResolved 後 extPending 清除（不再於後續移交重複出橫幅）。
+func TestExternalPendingHandoff(t *testing.T) {
+	h := newHub()
+	w1 := newClient(true)
+	h.addClient("doc.md", w1)
+	w2 := newClient(true)
+	h.addClient("doc.md", w2)
+
+	h.NotifyExternalChange("doc.md") // 標記待處理並廣播 external
+	if r := h.rooms["doc.md"]; r == nil || !r.extPending {
+		t.Fatal("NotifyExternalChange 應設定 extPending")
+	}
+
+	h.removeClient(w1) // saver 在未處理前離開 → 移交 w2
+	role, ok := findControl(w2, "role")
+	if !ok {
+		t.Fatal("w2 應收到 role 通知")
+	}
+	if !role.Saver || !role.External {
+		t.Errorf("移交時 role 應帶 Saver+External，got %+v", role)
+	}
+
+	h.handleFrame(w2, ctrlFrame(controlMsg{Type: "extResolved"})) // 新 saver 已處理
+	if r := h.rooms["doc.md"]; r == nil || r.extPending {
+		t.Error("extResolved 後 extPending 應清除")
+	}
+}
+
+// TestExternalPendingOnJoinAsSaver：外部改檔待處理且房內暫無 saver（原 saver 離開、僅剩唯讀者）時，
+// 後續加入的可寫者接手為 saver，其 init 應帶 External 以出橫幅。
+func TestExternalPendingOnJoinAsSaver(t *testing.T) {
+	h := newHub()
+	w1 := newClient(true)
+	h.addClient("doc.md", w1)
+	r1 := newClient(false) // 唯讀者：saver 離開後不會接手
+	h.addClient("doc.md", r1)
+
+	h.NotifyExternalChange("doc.md")
+	h.removeClient(w1) // saver 離開，剩唯讀者 → r.saver 變 nil、房間仍在、extPending 維持
+	if r := h.rooms["doc.md"]; r == nil || r.saver != nil || !r.extPending {
+		t.Fatalf("應剩唯讀者、無 saver、extPending 仍為 true")
+	}
+
+	w2 := newClient(true) // 後續可寫者加入 → 接手為 saver
+	initMsg, _ := h.addClient("doc.md", w2)
+	m := parseInit(t, initMsg)
+	if !m.Saver || !m.External {
+		t.Errorf("接手為 saver 的 init 應帶 Saver+External，got %+v", m)
 	}
 }
