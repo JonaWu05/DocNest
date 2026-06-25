@@ -62,6 +62,12 @@ func New(root string) *Store {
 	return &Store{Root: root, pathLocks: map[string]*sync.Mutex{}}
 }
 
+// FileVersion 由檔案的大小與修改時間（奈秒）組出版本識別（ETag 風格），不需讀內容即可比對。
+// 供樂觀鎖（files）與外部改檔偵測（filewatch）共用同一格式，確保「自寫抑制」比對得上。
+func FileVersion(info os.FileInfo) string {
+	return fmt.Sprintf("%x-%x", info.Size(), info.ModTime().UnixNano())
+}
+
 // Lock 取得指定絕對路徑的專屬鎖；呼叫端取得後須在用畢時 Unlock。
 // 用於把「讀取現有版本 → 比對 → 寫入」包成同一檔的臨界區。
 func (s *Store) Lock(absPath string) *sync.Mutex {

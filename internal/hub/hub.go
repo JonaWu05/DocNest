@@ -81,12 +81,13 @@ type Hub struct {
 	az       *authz.Authz
 	upgrader websocket.Upgrader
 
-	clients    map[*Client]bool
-	broadcast  chan outbound
-	register   chan *Client
-	unregister chan *Client
-	presence   chan presenceUpdate
-	count      atomic.Int64
+	clients      map[*Client]bool
+	broadcast    chan outbound
+	register     chan *Client
+	unregister   chan *Client
+	presence     chan presenceUpdate
+	openPathsReq chan chan []string // 查詢目前開檔清單（在 Run goroutine 內讀 clients，維持單 goroutine 紀律）
+	count        atomic.Int64
 
 	// quit 由 Close() 關閉，通知 Run 結束並讓各 goroutine 的 channel 送出可解除阻塞。
 	quit      chan struct{}
@@ -104,12 +105,13 @@ func New(a *auth.Auth, az *authz.Authz, cfg *config.Config) *Hub {
 			// 與 CORS 共用 ALLOWED_ORIGINS，防止跨站 WebSocket 連線（CSWSH）。
 			CheckOrigin: func(r *http.Request) bool { return cfg.OriginAllowed(r.Header.Get("Origin")) },
 		},
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan outbound, sendBuffer),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		presence:   make(chan presenceUpdate),
-		quit:       make(chan struct{}),
+		clients:      make(map[*Client]bool),
+		broadcast:    make(chan outbound, sendBuffer),
+		register:     make(chan *Client),
+		unregister:   make(chan *Client),
+		presence:     make(chan presenceUpdate),
+		openPathsReq: make(chan chan []string),
+		quit:         make(chan struct{}),
 	}
 }
 
@@ -153,6 +155,9 @@ func (h *Hub) Run() {
 
 		case o := <-h.broadcast:
 			h.deliver(o)
+
+		case ch := <-h.openPathsReq:
+			ch <- h.currentOpenPaths()
 
 		case <-h.quit:
 			// 關閉所有連線：close(send) 會讓 writePump 送出 Close frame 後結束，
@@ -243,6 +248,38 @@ func (h *Hub) broadcastPresence() {
 		h.sendTo(c, msg)
 	}
 	h.count.Store(int64(len(h.clients)))
+}
+
+// currentOpenPaths 蒐集目前所有連線開著的不同檔案路徑（current_file）。僅在 Run goroutine 內呼叫。
+func (h *Hub) currentOpenPaths() []string {
+	set := make(map[string]bool, len(h.clients))
+	for c := range h.clients {
+		if c.currentFile != "" {
+			set[c.currentFile] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for p := range set {
+		out = append(out, p)
+	}
+	return out
+}
+
+// OpenPaths 回傳目前有人開著的檔案路徑（去重）。供 filewatch 決定要輪詢哪些檔。
+// 經 openPathsReq channel 交由 Run goroutine 讀取 clients，維持「clients 只在單一 goroutine 存取」紀律。
+func (h *Hub) OpenPaths() []string {
+	ch := make(chan []string, 1)
+	select {
+	case h.openPathsReq <- ch:
+		select {
+		case v := <-ch:
+			return v
+		case <-h.quit:
+			return nil
+		}
+	case <-h.quit:
+		return nil
+	}
 }
 
 // BroadcastFileUpdated 由檔案儲存流程呼叫，廣播「某檔被某人更新」的通知給所有人（不含內容）。

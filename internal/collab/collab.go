@@ -66,18 +66,23 @@ type client struct {
 	username  string
 	subject   string
 	canWrite  bool
-	streaming bool // 是否應上傳本地 update（最佳化 B：單人時為 false，本機累積不上傳）
+	streaming bool   // 是否應上傳本地 update（最佳化 B：單人時為 false，本機累積不上傳）
+	yjsID     int64  // 客戶端的 Yjs awareness clientID（經 hello 控制訊息登記）；離線時用於通知他人移除其游標
+	hasYjsID  bool   // 是否已收到 hello（yjsID 有效）
 	room      *room
 }
 
-// controlMsg 為伺服器→客戶端的控制訊息（以 tagControl 前綴的 JSON）。
+// controlMsg 為共編控制訊息（以 tagControl 前綴的 JSON）。
+// 伺服器→客戶端："init" | "role" | "stream" | "compact" | "peerLeft"；
+// 客戶端→伺服器："hello"（登記自己的 Yjs awareness clientID，供離線時通知他人移除游標）。
 type controlMsg struct {
-	Type      string `json:"type"`                // "init" | "role" | "stream" | "compact"
+	Type      string `json:"type"`
 	Seed      bool   `json:"seed,omitempty"`      // 是否由你以 .md 內容初始化文件
 	CanWrite  bool   `json:"canWrite,omitempty"`  // 你是否可寫（init）
 	Saver     bool   `json:"saver,omitempty"`     // 你是否為落檔者
 	Stream    bool   `json:"stream,omitempty"`    // 是否應上傳本地 update（init / stream）
 	SendState bool   `json:"sendState,omitempty"` // 是否需立即送出完整狀態（單人→多人時補餵新加入者）
+	ClientID  int64  `json:"clientId,omitempty"`  // Yjs awareness clientID（hello 登記 / peerLeft 通知移除）
 }
 
 // New 建立 collab Hub。
@@ -193,6 +198,33 @@ func (h *Hub) addClient(path string, cl *client) (initMsg []byte, replay [][]byt
 	return initMsg, replay
 }
 
+// RoomPaths 回傳目前有活躍共編房間的文件路徑。供 filewatch 決定要輪詢哪些檔。
+func (h *Hub) RoomPaths() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]string, 0, len(h.rooms))
+	for p := range h.rooms {
+		out = append(out, p)
+	}
+	return out
+}
+
+// NotifyExternalChange 通知指定文件的共編房間：磁碟上的 .md 被外部修改。
+// 房內客戶端收到後，由落檔者暫停自動落檔並出橫幅，讓使用者選擇保留共編版本或改用磁碟版本，
+// 避免 saver 下次落檔靜默覆蓋外部變更。無對應房間時為 no-op。
+func (h *Hub) NotifyExternalChange(path string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	r := h.rooms[path]
+	if r == nil {
+		return
+	}
+	f := ctrlFrame(controlMsg{Type: "external"})
+	for c := range r.clients {
+		c.trySend(f)
+	}
+}
+
 // handleFrame 處理客戶端送來的一個 frame。
 func (h *Hub) handleFrame(cl *client, data []byte) {
 	if len(data) < 1 {
@@ -232,6 +264,13 @@ func (h *Hub) handleFrame(cl *client, data []byte) {
 	case tagAwareness:
 		// awareness 不需保存（即時狀態），僅轉發
 		h.broadcastLocked(r, cl, frame(tagAwareness, payload))
+	case tagControl:
+		// 客戶端目前僅送 "hello"：登記自己的 Yjs clientID，供離線時通知他人移除其殘留游標。
+		var m controlMsg
+		if json.Unmarshal(payload, &m) == nil && m.Type == "hello" {
+			cl.yjsID = m.ClientID
+			cl.hasYjsID = true
+		}
 	}
 }
 
@@ -269,6 +308,13 @@ func (h *Hub) removeClient(cl *client) {
 	if len(r.clients) == 0 {
 		delete(h.rooms, r.path) // 空房回收:下次開檔重新從 .md 種子
 		return
+	}
+
+	// 通知房內其他人移除這位離線者的 awareness（游標 / 選取）。
+	// 伺服器為 dumb relay，不解 CRDT，但連線關閉是確定性事件：用登記的 Yjs clientID
+	// 廣播 peerLeft，存活端據此即時清掉殘留游標，避免快速 F5 在 awareness 30s 逾時前堆積 ghost。
+	if cl.hasYjsID {
+		h.broadcastLocked(r, cl, ctrlFrame(controlMsg{Type: "peerLeft", ClientID: cl.yjsID}))
 	}
 	// saver 離開 → 從剩餘可寫者選新 saver(尚未 seed 時請它 seed)；
 	// 舊 saver 的壓縮請求已無人回應，重置 compactMark 讓未來仍能再次壓縮。

@@ -107,6 +107,8 @@
       </div>
       <!-- Presence：顯示誰在看/編輯目前檔案、其他在線者 -->
       <div id="presence-bar" class="presence-bar empty"></div>
+      <!-- 共編狀態列：即時共編房內的參與者、落檔者與最近落檔時間（由 collabStatus.js 渲染） -->
+      <div id="collab-bar" class="collab-bar hidden"></div>
       <!-- 即時同步提示條：別人儲存了目前正在編輯的檔案 -->
       <div id="update-bar" class="hidden">
         <span id="update-bar-msg"></span>
@@ -114,6 +116,14 @@
           <button id="update-bar-load" class="update-bar-btn primary">載入</button>
           <button id="update-bar-overwrite" class="update-bar-btn hidden">覆蓋</button>
           <button id="update-bar-ignore" class="update-bar-btn">忽略</button>
+        </span>
+      </div>
+      <!-- 共編外部改檔協調橫幅：僅落檔者可見，二選一（由 collabExternal.js 控制） -->
+      <div id="collab-external-bar" class="hidden">
+        <span>此文件在伺服器上被外部修改。要保留目前的共編版本，還是改用磁碟上的版本？</span>
+        <span class="update-bar-actions">
+          <button id="collab-ext-keep" class="update-bar-btn primary">保留共編版本</button>
+          <button id="collab-ext-disk" class="update-bar-btn">改用磁碟版本（覆蓋共編內容）</button>
         </span>
       </div>
       <div id="content" class="preview">

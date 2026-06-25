@@ -32,8 +32,11 @@ export async function handleFileUpdated(payload) {
 
   if (saved_by === state.username) return; // 自己儲存的，忽略（不跳提示）
   if (path !== state.currentPath) return;  // 不是目前開啟的檔案，忽略
-  // 此檔由共編接管：內容已由 Yjs 即時同步，saver 落檔觸發的廣播無須提示或重載（含連線空窗期）
+  // 此檔由共編接管：內容已由 Yjs 即時同步處理；外部改檔則另由 collab 的 external 控制訊息處理（停 saver 落檔 + 橫幅）
   if (collabManaged()) return;
+
+  // saved_by 為空表示「外部改檔」（非經本程式：git pull、腳本、伺服器直接編輯…），由 filewatch 偵測後廣播。
+  const external = !saved_by;
 
   if (state.currentMode === "preview") {
     // 預覽模式：直接抓最新內容並套用
@@ -49,13 +52,16 @@ export async function handleFileUpdated(payload) {
       renderPreview();
       buildTOC();
       previewPane.scrollTop = ratio * (previewPane.scrollHeight - previewPane.clientHeight);
-      showToast(saved_by + " 更新了此文件", "info");
+      showToast(external ? "此文件已被外部修改，已載入最新內容" : saved_by + " 更新了此文件", "info");
     } catch (err) {
       showToast("同步最新內容失敗：" + err.message, "error");
     }
   } else {
     // 編輯 / 分割模式：可能正在編輯，不可直接覆蓋，改用提示條讓使用者選擇
-    showBar(path, saved_by + " 剛剛儲存了此文件，是否載入最新版本？", false);
+    const msg = external
+      ? "此文件已被外部修改，是否載入最新版本？"
+      : saved_by + " 剛剛儲存了此文件，是否載入最新版本？";
+    showBar(path, msg, false);
   }
 }
 

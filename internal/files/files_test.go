@@ -24,7 +24,7 @@ func TestFilterTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := New(store.New(t.TempDir()), az, nil, false) // filterTree 不使用 hub，傳 nil 即可
+	f := New(store.New(t.TempDir()), az, nil, nil, false) // filterTree 不使用 hub / filewatch，傳 nil 即可
 
 	nodes := []*store.FileNode{
 		{Name: "welcome.md", Path: "welcome.md"},
@@ -137,7 +137,7 @@ func TestExtractAssetRefs(t *testing.T) {
 // TestPurgeExpiredTrash 驗證背景清除：刪除時間超過保留期的回收項目會被永久刪除，未過期的保留。
 func TestPurgeExpiredTrash(t *testing.T) {
 	root := t.TempDir()
-	f := New(store.New(root), nil, nil, false) // 清除邏輯不使用 az / hub
+	f := New(store.New(root), nil, nil, nil, false) // 清除邏輯不使用 az / hub / filewatch
 
 	mkEntry := func(id, deletedAt string) {
 		dir := filepath.Join(root, ".trash", id)

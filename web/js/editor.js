@@ -15,7 +15,9 @@ import { sendPresence } from "./ws.js";
 import { loadEasyMDE } from "./vendor.js";
 import { openAssetModal } from "./assets.js";
 import { openDocPicker } from "./docPicker.js";
-import { connectCollab, disconnectCollab, collabActive, collabManaged, collabIsSaver, collabCurrentPath } from "./collab.js";
+import { connectCollab, disconnectCollab, collabActive, collabManaged, collabIsSaver, collabCurrentPath, collabNoteSaved } from "./collab.js";
+import { renderCollabStatus } from "./collabStatus.js";
+import { setCollabExternal } from "./collabExternal.js";
 
 // 打字時的預覽 / 目錄更新採 debounce：連續輸入停止約 150ms 後才重算一次，
 // 避免每個按鍵都全量 marked.parse + 重建 DOM 造成卡頓。
@@ -110,6 +112,9 @@ async function ensureCollab() {
       state.currentContent = txt; // 維持單一真實來源（供預覽 / 目錄 / 落檔）
       debouncedCollabRefresh();
     },
+    onPresenceChange: renderCollabStatus, // 房內參與者 / 落檔者 / 落檔時間變動 → 重繪共編狀態列
+    onExternalChange: setCollabExternal,  // 外部改檔（僅落檔者）→ 顯示 / 收掉協調橫幅
+
     onSaveRequest: (txt) => {
       state.currentContent = txt;
       // 由 saver 靜默落檔，且略過樂觀鎖（force）：共編內容為 CRDT 合併後的超集，已含磁碟上的版本，
@@ -217,12 +222,18 @@ export async function saveFile(silent, force) {
       return;
     }
     await ensureOk(res);
+    const byCollabSaver = collabManaged() && collabIsSaver(); // 共編 saver 的自動落檔：回饋改走狀態列
     // 存檔回應期間可能已切換到別的檔案；僅當仍停在同一檔時才回寫版本 / 未存標記，避免污染新檔狀態。
     if (state.currentPath === savingPath) {
       state.currentVersion = res.headers.get("X-File-Version") || state.currentVersion; // 更新基準版本
       setDirty(false);
     }
-    showToast(silent ? "已自動儲存" : "儲存成功", silent ? "info" : "success");
+    if (byCollabSaver) {
+      collabNoteSaved(); // 經 awareness 廣播落檔時間，由共編狀態列顯示「已儲存 …」
+      if (!silent) showToast("儲存成功", "success"); // 手動存檔仍給回饋；自動落檔靜默（避免每 1.5s 跳一次提示）
+    } else {
+      showToast(silent ? "已自動儲存" : "儲存成功", silent ? "info" : "success");
+    }
   } catch (err) {
     showToast("儲存失敗：" + err.message, "error");
   } finally {

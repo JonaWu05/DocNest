@@ -33,6 +33,7 @@ import (
 	"markdownEditor/internal/authz"
 	"markdownEditor/internal/collab"
 	"markdownEditor/internal/config"
+	"markdownEditor/internal/filewatch"
 	"markdownEditor/internal/files"
 	"markdownEditor/internal/hub"
 	"markdownEditor/internal/store"
@@ -93,7 +94,31 @@ func main() {
 
 	collabH := collab.New(au, az, cfg) // 即時共編房間層（/ws/collab）
 
-	fileH := files.New(st, az, h, cfg.FsyncOnSave)
+	// 外部改檔偵測：只輪詢「目前有人開著」的檔（presence 開檔 ∪ 共編房間），
+	// 偵測到非經本程式的改寫時，通知非共編開檔者（file_updated）與共編房間（停自動落檔 + 橫幅）。
+	watcher := filewatch.New(3*time.Second,
+		func() []string { // 要輪詢的檔：合併 presence 開檔與共編房間路徑（去重交由 filewatch 的 known map）
+			return append(h.OpenPaths(), collabH.RoomPaths()...)
+		},
+		func(rel string) (string, bool) { // 取得檔案目前版本（size+mtime）
+			abs, err := st.SafeResolve(rel)
+			if err != nil {
+				return "", false
+			}
+			info, err := os.Stat(abs)
+			if err != nil {
+				return "", false
+			}
+			return store.FileVersion(info), true
+		},
+		func(rel string) { // 外部改檔：兩路通知
+			collabH.NotifyExternalChange(rel)  // 共編房間：橫幅 + 停 saver 自動落檔
+			h.BroadcastFileUpdated(rel, "")    // 非共編開檔者：file_updated（savedBy="" 表外部變更）
+		},
+	)
+	go watcher.Run()
+
+	fileH := files.New(st, az, h, watcher, cfg.FsyncOnSave)
 	fileH.StartTrashCleaner(cfg.TrashRetentionDays) // 背景定期清除過期的回收筒項目
 	uploadH := upload.New(st, az)
 
@@ -234,6 +259,7 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("HTTP 關閉逾時，強制結束", "err", err)
 	}
+	watcher.Stop()
 	h.Close()
 	slog.Info("已關閉所有連線，正常結束")
 }

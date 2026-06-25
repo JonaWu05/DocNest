@@ -2,7 +2,6 @@
 package files
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -26,12 +25,19 @@ var tsPrefix = regexp.MustCompile(`^\d+_`)
 // maxWriteSize 為單次寫入檔案的 request body 上限（10 MB）。
 const maxWriteSize = 10 << 20
 
+// WriteNotifier 接收本程式寫檔後的版本登記，供外部改檔偵測（filewatch）抑制自寫。
+// 以介面注入，避免 files 硬相依 filewatch，並讓測試可傳 nil。
+type WriteNotifier interface {
+	NoteWrite(rel, version string)
+}
+
 // Files 綁定檔案儲存、授權判斷與 WebSocket Hub（儲存後廣播通知）。
 type Files struct {
 	store *store.Store
 	az    *authz.Authz
 	hub   *hub.Hub
-	fsync bool // 存檔是否強制刷盤（由設定注入）
+	watch WriteNotifier // 寫檔後登記版本給 filewatch（可為 nil）
+	fsync bool          // 存檔是否強制刷盤（由設定注入）
 
 	// 來源文件 → 其引用的 asset 集合的解析快取（供 Raw 的「來源驗證」授權使用）。
 	// 以 size+mtime 版本識別判斷是否過期，避免同一頁多張圖重複讀檔解析。
@@ -49,15 +55,15 @@ type refCacheEntry struct {
 // 達上限時整批清空（快取僅為最佳化，未命中只是重讀重解析一份小文件，成本低，毋須 LRU）。
 const maxRefCacheEntries = 512
 
-// New 建立 Files handler 集合。
-func New(st *store.Store, az *authz.Authz, h *hub.Hub, fsync bool) *Files {
-	return &Files{store: st, az: az, hub: h, fsync: fsync, refCache: map[string]refCacheEntry{}}
+// New 建立 Files handler 集合。watch 可為 nil（不啟用外部改檔偵測，如測試）。
+func New(st *store.Store, az *authz.Authz, h *hub.Hub, watch WriteNotifier, fsync bool) *Files {
+	return &Files{store: st, az: az, hub: h, watch: watch, fsync: fsync, refCache: map[string]refCacheEntry{}}
 }
 
 // fileVersion 由檔案的大小與修改時間（奈秒）組出版本識別，作為樂觀鎖的版本（ETag 風格）。
-// 不需讀取整檔內容即可比對，省去每次存檔的整檔重讀（沿用 nginx/Apache 產生 ETag 的做法）。
+// 實作集中於 store.FileVersion，與 filewatch 的外部改檔偵測共用同一格式。
 func fileVersion(info os.FileInfo) string {
-	return fmt.Sprintf("%x-%x", info.Size(), info.ModTime().UnixNano())
+	return store.FileVersion(info)
 }
 
 // resolvePathParam 取出指定 query 參數，並解析成 Root 內的安全絕對路徑。
@@ -237,9 +243,13 @@ func (f *Files) WriteFile(c *gin.Context) {
 	// 路徑用 RelOf 正規化，與 hub 廣播時的讀取權過濾、前端的 currentFile 比對保持一致。
 	f.hub.BroadcastFileUpdated(f.store.RelOf(absPath), c.GetString("username"))
 
-	// 回傳寫入後的新版本（size+mtime），供前端更新樂觀鎖基準。
+	// 回傳寫入後的新版本（size+mtime），供前端更新樂觀鎖基準；同時登記給 filewatch 抑制自寫誤判。
 	if newInfo, err := os.Stat(absPath); err == nil {
-		c.Header("X-File-Version", fileVersion(newInfo))
+		ver := fileVersion(newInfo)
+		c.Header("X-File-Version", ver)
+		if f.watch != nil {
+			f.watch.NoteWrite(f.store.RelOf(absPath), ver)
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "儲存成功"})
 }

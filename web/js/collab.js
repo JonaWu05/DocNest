@@ -41,6 +41,9 @@ function loadYjs() {
 let session = null;
 let connectGen = 0; // 連線世代:每次 connect/disconnect 遞增,讓進行中的 async 連線辨識自己是否已被取代
 let connectFailed = false; // 最近一次連線是否失敗(供 collabManaged 在失敗時退回單機編輯)
+let presenceHandler = null; // 房內參與者變動時的 UI 回呼(由 connectCollab 的 opts 註冊;斷線時以空清單收尾)
+let presenceEmitTimer = null; // emitPresence 合併計時器:游標頻繁變動時避免逐次重建 UI
+let externalHandler = null; // 外部改檔時的 UI 回呼(active:bool):僅落檔者需出橫幅二選一
 
 // collabActive 回報目前是否已建立共編連線。
 export function collabActive() {
@@ -79,8 +82,17 @@ function sendFrame(tag, payload) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(frameBytes(tag, payload));
 }
 
+const textEncoder = new TextEncoder();
+
+// sendControl 送出客戶端→伺服器的控制訊息(JSON)。目前僅用於 hello(登記 Yjs clientID)。
+function sendControl(obj) {
+  sendFrame(TAG_CONTROL, textEncoder.encode(JSON.stringify(obj)));
+}
+
 // scheduleSaverSave 排程一次落檔(僅 saver),連續變更時 debounce 成一次。
+// 外部改檔待決期間暫停,避免 saver 以共編內容靜默覆蓋磁碟上的外部變更(由橫幅讓使用者選擇後才恢復)。
 function scheduleSaverSave() {
+  if (session.externalChanged) return;
   session.pendingSave = true;
   clearTimeout(session.saveTimer);
   session.saveTimer = setTimeout(() => {
@@ -121,6 +133,50 @@ function sendAwareness(clients) {
   sendFrame(TAG_AWARENESS, mod.encodeAwarenessUpdate(session.awareness, clients));
 }
 
+// updateLocalUser 設定本端 awareness 的 user 欄位(名稱 / 顏色 / 是否落檔者 / 最近落檔時間)。
+// y-codemirror 只讀 name/color 渲染游標標籤,額外欄位供房內參與者清單(collabStatus)顯示。
+// 變更會觸發 awareness "update"(origin local),連帶廣播給他人並重新 emitPresence。
+function updateLocalUser() {
+  if (!session) return;
+  const name = state.username || "匿名";
+  session.awareness.setLocalStateField("user", {
+    name,
+    color: colorFor(name),
+    saver: !!session.isSaver,
+    savedAt: session.savedAt || 0,
+  });
+}
+
+// participantsList 由 awareness 各端狀態組出房內參與者(名稱 / 顏色 / 落檔者 / 落檔時間 / 是否自己)。
+function participantsList() {
+  const states = session.awareness.getStates();
+  const selfId = session.doc.clientID;
+  const out = [];
+  states.forEach((st, id) => {
+    const u = st && st.user;
+    if (!u || !u.name) return;
+    out.push({ name: u.name, color: u.color, saver: !!u.saver, savedAt: u.savedAt || 0, self: id === selfId });
+  });
+  return out;
+}
+
+// emitPresence 把最新房內參與者清單交給已註冊的 UI 回呼;以短延遲合併連續變動(游標移動頻繁)。
+function emitPresence() {
+  if (!session || !presenceHandler || presenceEmitTimer) return;
+  presenceEmitTimer = setTimeout(() => {
+    presenceEmitTimer = null;
+    if (session && presenceHandler) presenceHandler(participantsList());
+  }, 120);
+}
+
+// collabNoteSaved 由 saver 落檔成功後呼叫:記錄落檔時間並經 awareness 廣播,
+// 讓房內所有人看到「已儲存 …」,同時取代 saver 每次自動落檔的提示噪音。
+export function collabNoteSaved() {
+  if (!session || !session.isSaver) return;
+  session.savedAt = Date.now();
+  updateLocalUser();
+}
+
 // seedFromText 由本客戶端以 .md 內容初始化共享文件(僅伺服器指派的 seeder 執行)。
 // 以非 "remote" 的 origin 進行,使其產生的 update 會被上傳給伺服器存入 log 並廣播給他人。
 //
@@ -140,6 +196,11 @@ function handleControl(msg) {
     session.streaming = !!msg.stream;
     if (msg.seed) seedFromText(session.seedText);
     ensureBinding();
+    // 登記本端 Yjs clientID:伺服器於本連線關閉時據此廣播 peerLeft,讓他人即時移除我的殘留游標。
+    // 每次(重)連都重送:重連在伺服器端為新連線,需重新登記。
+    sendControl({ type: "hello", clientId: session.doc.clientID });
+    updateLocalUser(); // 反映落檔者身分到 awareness,並觸發房內參與者清單更新
+    emitPresence();
     if (session.markReady) session.markReady(); // 綁定完成,通知 connectCollab 可解除唯讀
     // 重連:把離線期間的本地編輯推回伺服器(server 視為新加入,log 可能落後或為空),並重新宣告游標。
     if (session.connectedOnce && session.streaming) {
@@ -151,6 +212,7 @@ function handleControl(msg) {
     // saver 移交:成為新 saver,必要時補做 seed
     session.isSaver = !!msg.saver;
     if (msg.seed) seedFromText(session.seedText);
+    updateLocalUser(); // 落檔者身分變更,同步到 awareness 讓全房可見
     if (session.isSaver) scheduleSaverSave(); // 接手後盡快把目前狀態落檔
   } else if (msg.type === "stream") {
     // 串流切換(最佳化 B):多人時開始上傳;單人時停止(本機累積)。
@@ -159,7 +221,36 @@ function handleControl(msg) {
     if (msg.stream) sendAwareness([session.doc.clientID]); // 由獨自在房變為多人:宣告自己的游標
   } else if (msg.type === "compact") {
     sendFullState(TAG_STATE); // 以完整狀態壓縮伺服器端 log(最佳化 A)
+  } else if (msg.type === "peerLeft") {
+    // 某連線離線:伺服器以其 Yjs clientID 通知,立即移除該人殘留的 awareness(游標 / 選取),
+    // 不必枯等 y-protocols 30s 逾時(否則快速 F5 會在房內堆積 ghost)。origin "remote" 避免回送。
+    if (msg.clientId) mod.removeAwarenessStates(session.awareness, [msg.clientId], "remote");
+  } else if (msg.type === "external") {
+    // 磁碟上的 .md 被外部改寫。僅落檔者需處理(其餘人的編輯本就走 CRDT,由 saver 決定如何與磁碟協調)。
+    // 暫停自動落檔避免靜默覆蓋,出橫幅讓 saver 二選一(見 collabResolveKeepMine / collabResolveUseDisk)。
+    if (!session.isSaver) return;
+    session.externalChanged = true;
+    clearTimeout(session.saveTimer); // 取消已排程的落檔
+    if (externalHandler) externalHandler(true);
   }
+}
+
+// collabResolveKeepMine 由橫幅「保留共編版本」呼叫:恢復落檔,以目前共編內容覆蓋磁碟上的外部變更。
+export function collabResolveKeepMine() {
+  if (!session || !session.isSaver) return;
+  session.externalChanged = false;
+  scheduleSaverSave(); // 立即(debounce)落檔
+}
+
+// collabResolveUseDisk 由橫幅「改用磁碟版本」呼叫:以磁碟內容取代共享 Y.Text,經 CRDT 傳播給全房,
+// 落檔者隨後存回。會覆蓋目前在途的共編編輯(已於橫幅警告);僅由落檔者執行,避免多端重複重置。
+export function collabResolveUseDisk(diskText) {
+  if (!session || !session.isSaver) return;
+  session.externalChanged = false;
+  session.doc.transact(() => {
+    session.text.delete(0, session.text.length);
+    if (diskText) session.text.insert(0, diskText);
+  }, "external-reset"); // 非 "remote" origin:會被上傳廣播,並觸發 saver 落檔
 }
 
 // handleMessage 解析並分派一個收到的 frame。
@@ -216,6 +307,8 @@ export async function connectCollab(path, cm, opts) {
     isSaver: false,
     seeded: false,
     streaming: false, // 最佳化 B：是否上傳本地 update（由伺服器 init / stream 控制訊息決定）
+    savedAt: 0, // saver 最近一次落檔成功的時戳（經 awareness 廣播，供全房顯示「已儲存 …」）
+    externalChanged: false, // 磁碟被外部改寫且尚未由 saver 決定如何處理：暫停自動落檔，避免靜默覆蓋
     saveTimer: null,
     pendingSave: false,
     heartbeatTimer: null,
@@ -229,6 +322,8 @@ export async function connectCollab(path, cm, opts) {
     markReady: null,
   };
   const mySession = session; // 關閉後辨識自身,避免遲到的回呼污染新房間
+  presenceHandler = opts.onPresenceChange || null; // 註冊房內參與者變動的 UI 回呼
+  externalHandler = opts.onExternalChange || null; // 註冊外部改檔的 UI 回呼
 
   // ready:收到 init 並完成綁定後 resolve;呼叫端據此才解除編輯器唯讀(避免綁定前的編輯被覆蓋)。
   // 加逾時保險,避免 init 一直沒到(例如 WS 卡住)時編輯器永遠卡在唯讀。
@@ -237,8 +332,8 @@ export async function connectCollab(path, cm, opts) {
     setTimeout(resolve, 5000);
   });
 
-  // 本端身分(名稱 / 顏色):供其他人的編輯器渲染我的游標標籤。
-  awareness.setLocalStateField("user", { name: state.username || "匿名", color: colorFor(state.username || "匿名") });
+  // 本端身分(名稱 / 顏色 / 落檔者 / 落檔時間):供其他人的編輯器渲染我的游標標籤,並組成房內參與者清單。
+  updateLocalUser();
 
   // 文件變更:本地變更上傳、同步真實來源、必要時(saver)排程落檔。
   doc.on("update", (update, origin) => {
@@ -257,6 +352,7 @@ export async function connectCollab(path, cm, opts) {
     } else if (added.length) {
       sendAwareness([doc.clientID]);
     }
+    emitPresence(); // 房內成員 / 落檔者 / 落檔時間任一變動 → 更新狀態列
   });
 
   // 心跳:多人時定期重送本端 awareness,避免被對端的逾時機制清除,也補強晚加入者的初次同步。
@@ -304,6 +400,7 @@ function scheduleReconnect(s) {
 // 帶 force 略過樂觀鎖(與 saver 正常落檔一致),token 走 query(beacon 無法設標頭)。
 function flushBeacon() {
   if (!session || !session.isSaver || !session.pendingSave) return;
+  if (session.externalChanged) return; // 外部改檔待決:不在關閉時靜默覆蓋磁碟
   const url = `${API_BASE}/api/file?path=${encodeURIComponent(session.path)}&token=${encodeURIComponent(getToken())}&force=1`;
   navigator.sendBeacon(url, new Blob([session.text.toString()], { type: "text/plain; charset=utf-8" }));
   session.pendingSave = false;
@@ -313,6 +410,13 @@ if (typeof window !== "undefined") window.addEventListener("pagehide", flushBeac
 // disconnectCollab 收掉目前的共編房間(切檔、關檔、登出時呼叫)。
 export function disconnectCollab() {
   connectGen++; // 使任何進行中的 connectCollab 失效(快速切換 TAB 時避免綁到舊文件)
+  // 通知 UI 收掉共編狀態列(無論是否有 session:可能在連線空窗期切檔)。
+  clearTimeout(presenceEmitTimer);
+  presenceEmitTimer = null;
+  if (presenceHandler) presenceHandler([]);
+  presenceHandler = null;
+  if (externalHandler) externalHandler(false); // 收掉外部改檔橫幅
+  externalHandler = null;
   if (!session) return;
   const s = session;
   session = null; // 先清空,讓後續遲到的回呼/事件變成 no-op
@@ -320,7 +424,8 @@ export function disconnectCollab() {
   clearTimeout(s.reconnectTimer);
   clearInterval(s.heartbeatTimer);
   // 收尾前把尚未落檔的內容存下(僅 saver 且確有待存),避免切檔/關檔遺失最後 1.5 秒的編輯。
-  if (s.pendingSave && s.isSaver && s.onSaveRequest) s.onSaveRequest(s.text.toString());
+  // 外部改檔待決時不收尾落檔,避免以共編內容靜默覆蓋磁碟上的外部變更。
+  if (s.pendingSave && s.isSaver && !s.externalChanged && s.onSaveRequest) s.onSaveRequest(s.text.toString());
   // 通知他人移除我的游標(趁連線還開著;否則對端要等逾時才清掉殘留的游標)。
   if (s.awareness && s.streaming && s.ws && s.ws.readyState === WebSocket.OPEN) {
     try {
