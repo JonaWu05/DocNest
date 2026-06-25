@@ -15,6 +15,7 @@ import { sendPresence } from "./ws.js";
 import { loadEasyMDE } from "./vendor.js";
 import { openAssetModal } from "./assets.js";
 import { openDocPicker } from "./docPicker.js";
+import { connectCollab, disconnectCollab, collabActive, collabManaged, collabIsSaver, collabCurrentPath } from "./collab.js";
 
 // 打字時的預覽 / 目錄更新採 debounce：連續輸入停止約 150ms 後才重算一次，
 // 避免每個按鍵都全量 marked.parse + 重建 DOM 造成卡頓。
@@ -69,6 +70,9 @@ async function ensureEditor() {
   // 編輯器內容變更：更新真實來源、標記未儲存、即時刷新分割預覽、排程自動儲存
   state.easyMDE.codemirror.on("change", () => {
     if (state.suppressChange) return;
+    // 共編接管時：真實內容、預覽/目錄、落檔皆由 collab 的回呼處理（見 ensureCollab）。
+    // 用 collabManaged（而非 collabActive）涵蓋連線空窗期，避免此時的編輯漏到舊版自動儲存而與他人分歧。
+    if (collabManaged()) return;
     // 即時：真實內容、未儲存標記、自動儲存排程都不可延遲
     state.currentContent = state.easyMDE.value();
     setDirty(true);
@@ -84,6 +88,60 @@ export function setEditorValue(text) {
   state.suppressChange = true;
   state.easyMDE.value(text);
   state.suppressChange = false;
+}
+
+// 共編內容變動（本地或遠端）後的預覽 / 目錄刷新：debounce 避免逐則 update 全量重繪。
+// 編輯模式不顯示預覽故略過 renderPreview；預覽 / 分割模式都需重繪。
+const debouncedCollabRefresh = debounce(() => {
+  if (state.currentMode !== "edit") renderPreview();
+  buildTOC();
+}, 150);
+
+// ===== 啟用（或沿用）共編房間 =====
+// 僅對可寫檔案於編輯 / 分割模式啟用：把底層 CodeMirror 綁到共享 Y.Text，
+// 本地變更即時同步給協作者，落檔由 saver（房間第一個可寫者）debounce 後走既有存檔流程。
+// 同一檔切換編輯/分割模式時沿用既有連線，不重連。
+async function ensureCollab() {
+  if (collabActive() && collabCurrentPath() === state.currentPath) return;
+  await connectCollab(state.currentPath, state.easyMDE.codemirror, {
+    canWrite: state.currentWritable,
+    seedText: state.currentContent, // 若被指派為 seeder，用已讀入的 .md 內容初始化文件
+    onContentChange: (txt) => {
+      state.currentContent = txt; // 維持單一真實來源（供預覽 / 目錄 / 落檔）
+      debouncedCollabRefresh();
+    },
+    onSaveRequest: (txt) => {
+      state.currentContent = txt;
+      // 由 saver 靜默落檔，且略過樂觀鎖（force）：共編內容為 CRDT 合併後的超集，已含磁碟上的版本，
+      // saver 移交後新 saver 的版本號可能落後，若帶版本鎖會持續 409、檔案永遠存不進去。
+      // （外部直接改檔的協調留待後續：此情境會以共編內容覆蓋外部變更。）
+      saveFile(true, true);
+    },
+  });
+}
+
+// 進入編輯 / 分割模式時填入編輯器內容並設定可編輯狀態：
+//   - 可寫檔：接上共編（綁定由 connectCollab 以 Y.Text 內容覆蓋編輯器，不可再 setEditorValue）。
+//     連線/綁定完成前先設為唯讀，避免空窗期的編輯漏到舊版自動儲存、或被綁定的初始內容覆蓋。
+//   - 唯讀檔：不參與共編，沿用既有靜態填入並維持唯讀。
+async function prepareEditorContent() {
+  const cm = state.easyMDE.codemirror;
+  if (!state.currentWritable) {
+    setEditorValue(state.currentContent);
+    cm.setOption("readOnly", true);
+    return;
+  }
+  const path = state.currentPath;
+  cm.setOption("readOnly", true);
+  clearTimeout(state.autosaveTimer); // 清掉可能殘留的舊版自動儲存排程
+  try {
+    await ensureCollab();
+  } catch (e) {
+    // 共編連線失敗（例如 bundle 載入失敗）：退回單機編輯，至少不卡在唯讀。
+    showToast("即時共編連線失敗，改為單機編輯", "info");
+    setEditorValue(state.currentContent);
+  }
+  if (state.currentPath === path) cm.setOption("readOnly", false); // 仍停在同一檔才解除唯讀
 }
 
 // ===== 套用模式（preview / edit / split）=====
@@ -104,15 +162,13 @@ export async function applyMode(mode) {
     editorPane.classList.remove("hidden");
     previewPane.classList.add("hidden");
     await ensureEditor();
-    setEditorValue(state.currentContent);
-    state.easyMDE.codemirror.setOption("readOnly", !state.currentWritable); // 無寫入權則編輯器唯讀
+    await prepareEditorContent(); // 可寫檔接上共編並設定可編輯狀態；唯讀檔靜態填入
     setTimeout(() => state.easyMDE.codemirror.refresh(), 0);
   } else { // split
     editorPane.classList.remove("hidden");
     previewPane.classList.remove("hidden");
     await ensureEditor();
-    setEditorValue(state.currentContent);
-    state.easyMDE.codemirror.setOption("readOnly", !state.currentWritable); // 無寫入權則編輯器唯讀
+    await prepareEditorContent(); // 可寫檔接上共編並設定可編輯狀態；唯讀檔靜態填入
     renderPreview();
     setTimeout(() => state.easyMDE.codemirror.refresh(), 0);
   }
@@ -138,30 +194,41 @@ export async function saveFile(silent, force) {
     if (!silent) showToast("此檔案為唯讀，您沒有編輯權限", "info");
     return;
   }
+  // 共編接管時：落檔集中由 saver 進行（避免多人併發或空窗期直接 POST 互踩版本鎖、造成分歧）。
+  // 唯有「目前的 saver」會放行；其餘（非 saver、連線空窗期）一律不走舊版存檔，內容由 saver 自動落檔。
+  if (collabManaged() && !collabIsSaver()) {
+    if (!silent && !force) showToast("共編中：內容會由存檔者自動儲存", "info");
+    return;
+  }
   if (state.currentMode !== "preview" && state.easyMDE) state.currentContent = state.easyMDE.value();
 
+  const savingPath = state.currentPath; // 存檔期間使用者可能切檔，回寫狀態前須比對
   saveBtn.disabled = true;
   saveBtn.textContent = "儲存中…"; // 慢網路時給明確進度回饋
   try {
-    const url = API_BASE + "/api/file?path=" + encodeURIComponent(state.currentPath) + (force ? "&force=1" : "");
+    const url = API_BASE + "/api/file?path=" + encodeURIComponent(savingPath) + (force ? "&force=1" : "");
     const headers = { "Content-Type": "text/plain; charset=utf-8" };
     if (state.currentVersion) headers["X-File-Version"] = state.currentVersion; // 帶基準版本供後端比對
     const res = await authFetch(url, { method: "POST", headers, body: state.currentContent });
 
     // 409：編輯期間檔案已被他人更新，交由 sync 模組以提示條讓使用者選擇載入或覆蓋
     if (res.status === 409) {
-      window.dispatchEvent(new CustomEvent("file:conflict", { detail: { path: state.currentPath } }));
+      window.dispatchEvent(new CustomEvent("file:conflict", { detail: { path: savingPath } }));
       return;
     }
     await ensureOk(res);
-    state.currentVersion = res.headers.get("X-File-Version") || state.currentVersion; // 更新基準版本
-    setDirty(false);
+    // 存檔回應期間可能已切換到別的檔案；僅當仍停在同一檔時才回寫版本 / 未存標記，避免污染新檔狀態。
+    if (state.currentPath === savingPath) {
+      state.currentVersion = res.headers.get("X-File-Version") || state.currentVersion; // 更新基準版本
+      setDirty(false);
+    }
     showToast(silent ? "已自動儲存" : "儲存成功", silent ? "info" : "success");
   } catch (err) {
     showToast("儲存失敗：" + err.message, "error");
   } finally {
-    saveBtn.disabled = false;
     saveBtn.textContent = "儲存";
+    // 仍停在同一檔才還原按鈕狀態；若已切檔，由 openFile 依新檔權限設定，不在此覆寫。
+    if (state.currentPath === savingPath) saveBtn.disabled = !state.currentWritable;
   }
 }
 
@@ -179,6 +246,7 @@ export async function openFile(path, labelEl) {
   // 有未存變更時一律先確認——含「重新載入目前正在編輯的同一個檔案」這個情況，
   // 否則會在無提示下以伺服器內容覆蓋掉使用者尚未儲存的變更（資料遺失）。
   if (!(await confirmDiscardIfDirty())) return;
+  disconnectCollab(); // 切換檔案：先收掉舊檔的共編房間（會收尾未落檔內容）
 
   try {
     const res = await authFetch(API_BASE + "/api/file?path=" + encodeURIComponent(path));
@@ -220,6 +288,7 @@ export function openFileByPath(path) {
 }
 
 export function resetWorkspace() {
+  disconnectCollab(); // 關閉工作區：收掉共編房間
   state.currentPath = null;
   state.currentContent = "";
   state.currentVersion = null;

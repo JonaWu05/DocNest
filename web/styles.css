@@ -1645,3 +1645,33 @@ body.dark #update-bar {
   z-index: 9998;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
 }
+
+/* ===== 即時共編：其他人的游標 / 選取（y-codemirror awareness）=====
+   游標線與標籤背景色由 inline style（border-color / background-color）依各人配色指定。 */
+.remote-caret {
+  position: relative;
+  display: inline-block; /* 空元素也要有明確尺寸,否則游標線高度近乎 0、看不見 */
+  width: 0;
+  height: 1.2em;
+  vertical-align: text-bottom;
+  border-left: 2px solid; /* 線寬 / 樣式；顏色由 inline border-color 指定 */
+  margin: 0 -1px;
+  z-index: 5;
+}
+.remote-caret > div {
+  position: absolute;
+  top: -1.2em;
+  left: -2px;
+  padding: 0 4px;
+  border-radius: 3px 3px 3px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: #fff; /* 標籤文字 */
+  user-select: none;
+  pointer-events: none;
+}
+/* 靜止約 2 秒後 / 游標位置未變時隱藏名稱，只留游標線（由 y-codemirror 加上 hide-name） */
+.remote-caret.hide-name > div {
+  display: none;
+}

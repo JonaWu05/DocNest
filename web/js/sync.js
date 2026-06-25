@@ -8,6 +8,7 @@ import { buildTOC } from "./toc.js";
 import { showToast, setDirty } from "./ui.js";
 import { setEditorValue, saveFile } from "./editor.js";
 import { authFetch, ensureOk } from "./auth.js";
+import { collabManaged } from "./collab.js";
 
 const updateBar = document.getElementById("update-bar");
 const updateMsg = document.getElementById("update-bar-msg");
@@ -31,6 +32,8 @@ export async function handleFileUpdated(payload) {
 
   if (saved_by === state.username) return; // 自己儲存的，忽略（不跳提示）
   if (path !== state.currentPath) return;  // 不是目前開啟的檔案，忽略
+  // 此檔由共編接管：內容已由 Yjs 即時同步，saver 落檔觸發的廣播無須提示或重載（含連線空窗期）
+  if (collabManaged()) return;
 
   if (state.currentMode === "preview") {
     // 預覽模式：直接抓最新內容並套用
@@ -59,6 +62,7 @@ export async function handleFileUpdated(payload) {
 // 自己儲存被樂觀鎖擋下（editor.saveFile 收到 409 後派發 file:conflict 事件）
 function handleSaveConflict(path) {
   if (path !== state.currentPath) return;
+  if (collabManaged()) return; // 共編檔不走樂觀鎖衝突提示（合併交由 Yjs）
   if (conflictMode && pendingPath === path) return; // 已在顯示同一檔的衝突提示，不重覆彈
   showBar(path, "此文件已被他人更新，你的變更尚未儲存：要載入最新版本，還是以你的版本覆蓋？", true);
 }
@@ -75,6 +79,7 @@ function showBar(path, message, conflict) {
 // 使用者按「載入」：抓取最新內容覆蓋編輯器（放棄自己未存的變更）
 async function applyPending() {
   if (pendingPath === null) return;
+  if (collabManaged()) { hideBar(); return; } // 共編檔不可用 .md 覆蓋（會經綁定灌入 Y.Text 造成分歧）
   const path = pendingPath;
   try {
     const { content, version } = await fetchLatest(path);
@@ -94,6 +99,7 @@ async function applyPending() {
 // 使用者按「覆蓋」：以自己的版本強制儲存（略過樂觀鎖）
 async function overwritePending() {
   if (pendingPath === null || pendingPath !== state.currentPath) { hideBar(); return; }
+  if (collabManaged()) { hideBar(); return; } // 共編檔不走強制覆蓋
   hideBar();
   await saveFile(false, true); // force=1
 }

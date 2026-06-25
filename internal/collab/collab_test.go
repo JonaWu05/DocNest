@@ -6,8 +6,28 @@ import (
 )
 
 // 測試用：建立一個不接真 WS 的 client（send 緩衝夠大即不會走到關閉 conn 的分支）。
-func newClient(canWrite bool) *client {
-	return &client{send: make(chan []byte, 64), canWrite: canWrite, username: "u", subject: "s"}
+func newClient(canWrite bool) *client { return newClientN(canWrite, 64) }
+
+// newClientN 同 newClient，但可指定 send 緩衝大小（壓縮測試需容納大量廣播）。
+func newClientN(canWrite bool, buf int) *client {
+	return &client{send: make(chan []byte, buf), canWrite: canWrite, username: "u", subject: "s"}
+}
+
+// drainControl 取出 c.send 中第一則指定 type 的控制訊息（其餘略過）；找不到回傳 false。
+func drainControl(c *client, typ string) bool {
+	for {
+		select {
+		case b := <-c.send:
+			if len(b) > 0 && b[0] == tagControl {
+				var m controlMsg
+				if json.Unmarshal(b[1:], &m) == nil && m.Type == typ {
+					return true
+				}
+			}
+		default:
+			return false
+		}
+	}
 }
 
 func newHub() *Hub { return &Hub{rooms: map[string]*room{}} }
@@ -73,6 +93,7 @@ func TestUpdateRelayAndReadonly(t *testing.T) {
 	h.addClient("doc.md", w1)
 	r1 := newClient(false)
 	h.addClient("doc.md", r1)
+	drainControl(w1, "stream") // r1 加入(第二人)觸發給 w1 的 stream 通知,先清掉
 
 	h.handleFrame(w1, frame(tagUpdate, []byte("hello")))
 	got := recvFrame(t, r1)
@@ -134,5 +155,69 @@ func TestSaverHandoffAndEmptyRoom(t *testing.T) {
 	h.removeClient(w2) // 最後一人離開 → 房間回收
 	if _, ok := h.rooms["doc.md"]; ok {
 		t.Error("空房應被回收")
+	}
+}
+
+// TestSoloDeferredStreaming(最佳化 B):單人 init.Stream=false；第二人加入後 init.Stream=true，
+// 且原本獨自在房的 saver 收到 stream:true + sendState 通知（補餵新加入者）。
+func TestSoloDeferredStreaming(t *testing.T) {
+	h := newHub()
+	w1 := newClient(true)
+	init1, _ := h.addClient("doc.md", w1)
+	if parseInit(t, init1).Stream {
+		t.Error("單人加入時 Stream 應為 false（本機累積不上傳）")
+	}
+
+	w2 := newClient(true)
+	init2, _ := h.addClient("doc.md", w2)
+	if !parseInit(t, init2).Stream {
+		t.Error("第二人加入後 Stream 應為 true")
+	}
+	ctrl := parseControl(t, recvFrame(t, w1))
+	if ctrl.Type != "stream" || !ctrl.Stream || !ctrl.SendState {
+		t.Errorf("w1 應收到 stream(Stream+SendState) 通知，got %+v", ctrl)
+	}
+}
+
+// TestStopStreamingWhenSolo(最佳化 B):多人變回單人時，剩餘者收到 stream:false（停止上傳）。
+func TestStopStreamingWhenSolo(t *testing.T) {
+	h := newHub()
+	w1 := newClient(true)
+	h.addClient("doc.md", w1)
+	w2 := newClient(true)
+	h.addClient("doc.md", w2)
+	drainControl(w1, "stream") // 清掉 w2 加入時給 w1 的 stream:true
+
+	h.removeClient(w2) // 回到單人
+	ctrl := parseControl(t, recvFrame(t, w1))
+	if ctrl.Type != "stream" || ctrl.Stream {
+		t.Errorf("回到單人時 w1 應收到 stream:false，got %+v", ctrl)
+	}
+}
+
+// TestLogCompaction(最佳化 A):log 達門檻後 saver 收到 compact 請求；
+// saver 回傳完整狀態後，log 被壓縮為「快照 + 其後 tail」。
+func TestLogCompaction(t *testing.T) {
+	h := newHub()
+	w1 := newClientN(true, compactThreshold+16) // saver；緩衝需容納大量廣播
+	h.addClient("doc.md", w1)
+	w2 := newClientN(true, compactThreshold+16)
+	h.addClient("doc.md", w2)
+
+	for i := 0; i < compactThreshold; i++ {
+		h.handleFrame(w2, frame(tagUpdate, []byte("x"))) // w2 送 update，w1 為 saver
+	}
+	if !drainControl(w1, "compact") {
+		t.Fatal("log 達門檻後 saver 應收到 compact 請求")
+	}
+
+	before := len(h.rooms["doc.md"].log)
+	h.handleFrame(w1, frame(tagState, []byte("SNAPSHOT"))) // saver 回傳完整狀態
+	r := h.rooms["doc.md"]
+	if len(r.log) >= before {
+		t.Errorf("壓縮後 log 應變短，before=%d after=%d", before, len(r.log))
+	}
+	if len(r.log) == 0 || string(r.log[0]) != "SNAPSHOT" {
+		t.Errorf("壓縮後 log[0] 應為快照，got %v", r.log)
 	}
 }

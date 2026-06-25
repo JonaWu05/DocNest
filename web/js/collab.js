@@ -1,0 +1,310 @@
+// 即時共編(M2/M3):以 Yjs CRDT 讓多人同時逐字編輯、自動合併,並顯示彼此的即時游標 / 選取(awareness)。
+// 連到後端 dumb relay(/ws/collab,以文件路徑分房),把底層 CodeMirror 5 綁到 Y.Text,
+// 本地變更轉成 Yjs update 上傳、收到的 update 套用回文件。落檔由被指派為 saver 的客戶端
+// debounce 後走既有的存檔流程(onSaveRequest callback)完成,單一 saver 避免併發互踩版本鎖。
+//
+// 邊界(本期):僅對「可寫檔案」於編輯/分割模式啟用;唯讀檔仍走既有靜態讀檔路徑。
+import { getToken } from "./auth.js";
+import { state } from "./state.js";
+
+// 二進位 frame 第 1 個位元組為 tag,其後為負載(與後端 internal/collab 對齊)。
+const TAG_UPDATE = 0x75; // 'u' Yjs 文件 update
+const TAG_AWARENESS = 0x61; // 'a' awareness(游標 / 選取)
+const TAG_STATE = 0x73; // 's' 完整狀態快照(本端→伺服器,供 log 壓縮)
+const TAG_CONTROL = 0x63; // 'c' 控制訊息(JSON)
+
+const SAVE_DELAY = 1500; // saver 落檔的 debounce 間隔(毫秒),比照 autosave
+const AWARENESS_HEARTBEAT = 10000; // awareness 心跳間隔(毫秒):多人時定期重送,維持存活並讓晚加入者看到游標
+
+// 游標配色:依使用者名稱雜湊到固定色盤,讓同一人每次都同色、彼此易辨識。
+const USER_COLORS = ["#1f8a70", "#d1495b", "#3d7ea6", "#b8860b", "#7b5cd6", "#c2410c", "#0e7490", "#9d174d"];
+function colorFor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return USER_COLORS[h % USER_COLORS.length];
+}
+
+const textDecoder = new TextDecoder();
+
+// 延遲載入打包好的 Yjs 相依(約 100KB);僅在首次啟用共編時注入,不影響首屏。
+// 版本 query:vendor 走 immutable 長快取,重建 bundle 後必須遞增此值,否則瀏覽器會供應舊檔。
+const BUNDLE_VERSION = 2;
+let mod = null;
+function loadYjs() {
+  if (mod) return Promise.resolve(mod);
+  return import(`/static/vendor/yjs/yjs-bundle.js?v=${BUNDLE_VERSION}`).then((m) => (mod = m));
+}
+
+// 目前的共編工作階段;null 代表未啟用。
+let session = null;
+let connectGen = 0; // 連線世代:每次 connect/disconnect 遞增,讓進行中的 async 連線辨識自己是否已被取代
+let connectFailed = false; // 最近一次連線是否失敗(供 collabManaged 在失敗時退回單機編輯)
+
+// collabActive 回報目前是否已建立共編連線。
+export function collabActive() {
+  return !!session;
+}
+
+// collabManaged 回報「目前檔案是否由共編接管」:已連線(任何模式),或可寫檔處於編輯/分割模式
+// (含連線尚未完成的空窗期)。據此讓編輯/存檔/同步提示一律走共編路徑,不會在空窗期漏到舊版
+// 自動儲存或樂觀鎖而與他人產生分歧。連線失敗時退回單機編輯(回 false)。
+export function collabManaged() {
+  if (collabActive()) return true;
+  return !connectFailed && state.currentWritable && state.currentMode !== "preview";
+}
+
+// collabCurrentPath 回報目前共編的文件路徑(無則 null)。
+export function collabCurrentPath() {
+  return session ? session.path : null;
+}
+
+// collabIsSaver 回報本客戶端是否為目前房間的落檔者。
+export function collabIsSaver() {
+  return !!session && session.isSaver;
+}
+
+// frameBytes 在負載前加上 1 byte tag。
+function frameBytes(tag, payload) {
+  const out = new Uint8Array(1 + payload.length);
+  out[0] = tag;
+  out.set(payload, 1);
+  return out;
+}
+
+// sendFrame 在連線開啟時送出一個 frame;未開啟則靜默忽略。
+function sendFrame(tag, payload) {
+  const ws = session && session.ws;
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(frameBytes(tag, payload));
+}
+
+// scheduleSaverSave 排程一次落檔(僅 saver),連續變更時 debounce 成一次。
+function scheduleSaverSave() {
+  session.pendingSave = true;
+  clearTimeout(session.saveTimer);
+  session.saveTimer = setTimeout(() => {
+    if (session && session.isSaver && session.onSaveRequest) {
+      session.onSaveRequest(session.text.toString());
+      session.pendingSave = false;
+    }
+  }, SAVE_DELAY);
+}
+
+// sendFullState 送出目前文件的完整狀態(Y.encodeStateAsUpdate)。
+//   tag=TAG_UPDATE：單人→多人時補餵新加入者(最佳化 B,會被廣播)。
+//   tag=TAG_STATE ：回應伺服器壓縮請求(最佳化 A,僅用於取代 log,不廣播)。
+function sendFullState(tag) {
+  if (!session) return;
+  sendFrame(tag, mod.Y.encodeStateAsUpdate(session.doc));
+}
+
+// ensureBinding 建立 CodeMirror↔Y.Text 綁定(僅一次)。於收到 init(seed 完成)後才綁,
+// 讓 seeder 的編輯器直接顯示已 seed 的內容,避免「內容→空白→內容」的閃爍。
+// 傳入 awareness 後,綁定會自動同步本端游標並渲染其他人的游標 / 選取。
+function ensureBinding() {
+  if (session.binding) return;
+  const b = new mod.CodemirrorBinding(session.text, session.cm, session.awareness);
+  session.binding = b;
+  // y-codemirror 預設在編輯器失焦時清掉自己的游標(blur → cursor=null),
+  // 會造成「對方視窗在背景 / 單機多視窗測試」時看不到游標。移除此行為,讓游標位置跨視窗保留
+  // （離線/關閉時仍會在 disconnectCollab 主動送出移除）。屬性名於 pinned 版本穩定。
+  if (b._blurListeer) {
+    session.cm.off("blur", b._blurListeer);
+    session.cm.off("swapDoc", b._blurListeer);
+  }
+}
+
+// sendAwareness 送出指定 client 的 awareness 狀態(游標 / 名稱顏色);僅在串流中(有他人)才送。
+function sendAwareness(clients) {
+  if (!session.streaming || !clients.length) return;
+  sendFrame(TAG_AWARENESS, mod.encodeAwarenessUpdate(session.awareness, clients));
+}
+
+// seedFromText 由本客戶端以 .md 內容初始化共享文件(僅伺服器指派的 seeder 執行)。
+// 以非 "remote" 的 origin 進行,使其產生的 update 會被上傳給伺服器存入 log 並廣播給他人。
+function seedFromText(seedText) {
+  if (session.seeded || !seedText) {
+    session.seeded = true;
+    return;
+  }
+  session.doc.transact(() => session.text.insert(0, seedText), "seed");
+  session.seeded = true;
+}
+
+// handleControl 處理伺服器送來的控制訊息(init / role)。
+function handleControl(msg) {
+  if (msg.type === "init") {
+    session.isSaver = !!msg.saver;
+    session.streaming = !!msg.stream;
+    if (msg.seed) seedFromText(session.seedText);
+    ensureBinding();
+    if (session.markReady) session.markReady(); // 綁定完成,通知 connectCollab 可解除唯讀
+  } else if (msg.type === "role") {
+    // saver 移交:成為新 saver,必要時補做 seed
+    session.isSaver = !!msg.saver;
+    if (msg.seed) seedFromText(session.seedText);
+    if (session.isSaver) scheduleSaverSave(); // 接手後盡快把目前狀態落檔
+  } else if (msg.type === "stream") {
+    // 串流切換(最佳化 B):多人時開始上傳;單人時停止(本機累積)。
+    session.streaming = !!msg.stream;
+    if (msg.stream && msg.sendState) sendFullState(TAG_UPDATE); // 補餵剛加入者
+    if (msg.stream) sendAwareness([session.doc.clientID]); // 由獨自在房變為多人:宣告自己的游標
+  } else if (msg.type === "compact") {
+    sendFullState(TAG_STATE); // 以完整狀態壓縮伺服器端 log(最佳化 A)
+  }
+}
+
+// handleMessage 解析並分派一個收到的 frame。
+function handleMessage(data) {
+  if (data.length < 1) return;
+  const tag = data[0];
+  const payload = data.subarray(1);
+  if (tag === TAG_CONTROL) {
+    let msg;
+    try {
+      msg = JSON.parse(textDecoder.decode(payload));
+    } catch (e) {
+      return;
+    }
+    handleControl(msg);
+  } else if (tag === TAG_UPDATE) {
+    // origin "remote":避免在 doc.update 處理器中又把它回送伺服器(造成迴圈)
+    mod.Y.applyUpdate(session.doc, payload, "remote");
+  } else if (tag === TAG_AWARENESS) {
+    // origin "remote":避免 awareness 變更處理器把它再回送(造成迴圈)
+    mod.applyAwarenessUpdate(session.awareness, payload, "remote");
+  }
+}
+
+// connectCollab 對 path 建立共編房間並把 cm 綁到共享文件。
+//   opts.canWrite      此檔是否可寫(唯讀者不會走到這裡,保留旗標供日後使用)
+//   opts.seedText      若被指派為 seeder,用來初始化文件的 .md 內容
+//   opts.onContentChange(text)  文件內容變動時呼叫(供更新真實來源與預覽/目錄)
+//   opts.onSaveRequest(text)    身為 saver 需落檔時呼叫(走既有存檔流程)
+export async function connectCollab(path, cm, opts) {
+  disconnectCollab(); // 切檔前先收掉舊房間(會遞增 connectGen)
+  const myGen = connectGen;
+  connectFailed = false;
+  let m;
+  try {
+    m = await loadYjs();
+  } catch (e) {
+    connectFailed = true; // 讓 collabManaged 退回單機編輯,避免可寫檔卡在唯讀
+    throw e;
+  }
+  if (myGen !== connectGen) return; // 載入期間又切換/斷線 → 放棄,避免綁到錯的文件
+
+  const doc = new m.Y.Doc();
+  const text = doc.getText("content");
+  const awareness = new m.Awareness(doc);
+  session = {
+    path,
+    cm,
+    doc,
+    text,
+    awareness,
+    ws: null,
+    binding: null,
+    isSaver: false,
+    seeded: false,
+    streaming: false, // 最佳化 B：是否上傳本地 update（由伺服器 init / stream 控制訊息決定）
+    saveTimer: null,
+    pendingSave: false,
+    heartbeatTimer: null,
+    canWrite: !!opts.canWrite,
+    seedText: opts.seedText || "",
+    onContentChange: opts.onContentChange,
+    onSaveRequest: opts.onSaveRequest,
+    markReady: null,
+  };
+  const mySession = session; // 關閉後辨識自身,避免遲到的回呼污染新房間
+
+  // ready:收到 init 並完成綁定後 resolve;呼叫端據此才解除編輯器唯讀(避免綁定前的編輯被覆蓋)。
+  // 加逾時保險,避免 init 一直沒到(例如 WS 卡住)時編輯器永遠卡在唯讀。
+  const ready = new Promise((resolve) => {
+    session.markReady = resolve;
+    setTimeout(resolve, 5000);
+  });
+
+  // 本端身分(名稱 / 顏色):供其他人的編輯器渲染我的游標標籤。
+  awareness.setLocalStateField("user", { name: state.username || "匿名", color: colorFor(state.username || "匿名") });
+
+  // 文件變更:本地變更上傳、同步真實來源、必要時(saver)排程落檔。
+  doc.on("update", (update, origin) => {
+    if (session !== mySession) return;
+    // 本地變更才上傳,且僅在串流中(最佳化 B:單人時本機累積不上傳)。落檔與預覽不受串流影響。
+    if (origin !== "remote" && session.streaming) sendFrame(TAG_UPDATE, update);
+    if (session.onContentChange) session.onContentChange(text.toString());
+    if (session.isSaver) scheduleSaverSave();
+  });
+
+  // awareness 變更:本端游標移動即廣播;收到遠端新加入者時回敬一次,讓對方立即看到我的游標。
+  awareness.on("update", ({ added, updated, removed }, origin) => {
+    if (session !== mySession) return;
+    if (origin === "local") {
+      sendAwareness([...added, ...updated, ...removed]);
+    } else if (added.length) {
+      sendAwareness([doc.clientID]);
+    }
+  });
+
+  // 心跳:多人時定期重送本端 awareness,避免被對端的逾時機制清除,也補強晚加入者的初次同步。
+  session.heartbeatTimer = setInterval(() => {
+    if (session === mySession) sendAwareness([doc.clientID]);
+  }, AWARENESS_HEARTBEAT);
+
+  // 綁定延後到收到 init 後(見 ensureBinding),避免可寫檔進編輯時的內容閃爍。
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const token = getToken();
+  const url = `${proto}://${location.host}/ws/collab?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
+  const ws = new WebSocket(url);
+  ws.binaryType = "arraybuffer";
+  session.ws = ws;
+  ws.addEventListener("message", (ev) => {
+    if (session === mySession) handleMessage(new Uint8Array(ev.data));
+  });
+
+  await ready; // 等綁定完成再回傳,呼叫端才解除唯讀
+}
+
+// disconnectCollab 收掉目前的共編房間(切檔、關檔、登出時呼叫)。
+export function disconnectCollab() {
+  connectGen++; // 使任何進行中的 connectCollab 失效(快速切換 TAB 時避免綁到舊文件)
+  if (!session) return;
+  const s = session;
+  session = null; // 先清空,讓後續遲到的回呼/事件變成 no-op
+  clearTimeout(s.saveTimer);
+  clearInterval(s.heartbeatTimer);
+  // 收尾前把尚未落檔的內容存下(僅 saver 且確有待存),避免切檔/關檔遺失最後 1.5 秒的編輯。
+  if (s.pendingSave && s.isSaver && s.onSaveRequest) s.onSaveRequest(s.text.toString());
+  // 通知他人移除我的游標(趁連線還開著;否則對端要等逾時才清掉殘留的游標)。
+  if (s.awareness && s.streaming && s.ws && s.ws.readyState === WebSocket.OPEN) {
+    try {
+      s.awareness.setLocalState(null);
+      s.ws.send(frameBytes(TAG_AWARENESS, mod.encodeAwarenessUpdate(s.awareness, [s.doc.clientID])));
+    } catch (e) {
+      /* 忽略 */
+    }
+  }
+  if (s.awareness) {
+    try {
+      s.awareness.destroy();
+    } catch (e) {
+      /* 忽略 */
+    }
+  }
+  if (s.binding) {
+    try {
+      s.binding.destroy();
+    } catch (e) {
+      /* 忽略 */
+    }
+  }
+  if (s.ws) {
+    try {
+      s.ws.close();
+    } catch (e) {
+      /* 忽略 */
+    }
+  }
+  if (s.doc) s.doc.destroy();
+}
