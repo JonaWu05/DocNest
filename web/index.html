@@ -5,6 +5,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ .Title }}</title>
+  <!-- 內嵌 SVG 圖示：避免瀏覽器自動請求不存在的 /favicon.ico（404），且不需額外圖檔或路由 -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>">
   {{ if .LoginBg }}<!-- 自訂登入背景圖（環境變數 LOGIN_BG）；未設定時用 styles.css 的暖色漸層預設 -->
   <style>{{ .LoginBg }}</style>{{ end }}
 
