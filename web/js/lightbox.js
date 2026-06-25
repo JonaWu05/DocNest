@@ -5,6 +5,7 @@ import { previewPane } from "./dom.js";
 let overlay = null;
 let overlayImg = null;
 
+// ensureOverlay 首次使用時建立 lightbox 的遮罩與圖片元素（之後重用同一份）。
 function ensureOverlay() {
   if (overlay) return;
   overlay = document.createElement("div");
@@ -16,6 +17,7 @@ function ensureOverlay() {
   document.body.appendChild(overlay);
 }
 
+// open 以指定圖片開啟全螢幕 lightbox，並掛上 Esc 關閉監聽。
 function open(src, alt) {
   ensureOverlay();
   overlayImg.src = src;
@@ -24,6 +26,7 @@ function open(src, alt) {
   document.addEventListener("keydown", onEsc, true);
 }
 
+// close 關閉 lightbox 並釋放圖片來源（避免關閉後仍占用記憶體）。
 function close() {
   if (!overlay) return;
   overlay.classList.add("hidden");
@@ -31,11 +34,12 @@ function close() {
   document.removeEventListener("keydown", onEsc, true);
 }
 
-// capture + stopPropagation：lightbox 開啟時 Esc 只用來關它，不波及其他 Esc 行為
+// onEsc 處理 lightbox 開啟時的 Esc：capture + stopPropagation，只用來關它、不波及其他 Esc 行為。
 function onEsc(e) {
   if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
 }
 
+// initLightbox 以事件委派在 previewPane 綁定「點圖放大」；委派故跨每次重繪都有效，不需逐圖重綁。
 export function initLightbox() {
   previewPane.addEventListener("click", (e) => {
     const img = e.target.closest("img");

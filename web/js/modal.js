@@ -7,6 +7,7 @@
 let overlay = null;        // 共用的遮罩 + 對話框 DOM（首次使用時建立）
 let cancelActive = null;   // 取消目前開著的對話框（用於「同時只開一個」）
 
+// ensureOverlay 首次使用時建立共用的遮罩 + 對話框 DOM（之後重用同一份）。
 function ensureOverlay() {
   if (overlay) return;
   overlay = document.createElement("div");
@@ -23,7 +24,7 @@ function ensureOverlay() {
   document.body.appendChild(overlay);
 }
 
-// 共用實作：input=true 時帶輸入框（prompt），否則為確認框（confirm）
+// showDialog 為 confirmModal / promptModal 的共用實作：input=true 時帶輸入框（prompt），否則為確認框（confirm）。
 function showDialog({ message, input, defaultValue, okText, cancelText }) {
   ensureOverlay();
   // 同時只允許一個對話框：若已有，先以「取消」收掉舊的
@@ -69,10 +70,12 @@ function showDialog({ message, input, defaultValue, okText, cancelText }) {
   });
 }
 
+// confirmModal 顯示確認框，回傳 Promise<boolean>（確定為 true、取消為 false）。
 export function confirmModal(message, opts = {}) {
   return showDialog({ message, input: false, okText: opts.okText, cancelText: opts.cancelText });
 }
 
+// promptModal 顯示輸入框，回傳 Promise<string|null>（確定回傳輸入字串、取消回 null）。
 export function promptModal(message, defaultValue = "", opts = {}) {
   return showDialog({ message, input: true, defaultValue, okText: opts.okText, cancelText: opts.cancelText });
 }

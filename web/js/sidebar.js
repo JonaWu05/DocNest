@@ -3,10 +3,12 @@ const MIN_WIDTH = 200;
 const MAX_WIDTH = 560;
 const STORAGE_KEY = "sidebarWidth";
 
+// clamp 把寬度限制在 [MIN_WIDTH, MAX_WIDTH] 之間。
 function clamp(w) {
   return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, w));
 }
 
+// initSidebarResize 綁定側欄右緣把手的拖曳調整寬度，並還原 / 記憶 localStorage 的偏好。
 export function initSidebarResize() {
   const sidebar = document.getElementById("sidebar");
   const resizer = document.getElementById("sidebar-resizer");
