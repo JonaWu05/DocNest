@@ -155,7 +155,10 @@ function insertAsset(item) {
   if (!state.currentPath) return;
   const rel = relativeFromDocDir(item.path);
   const label = assetDisplayName(item.name);
-  const md = item.isImage ? "![" + label + "](" + rel + ")" : "[" + label + "](" + rel + ")";
+  // 圖片與 PDF 用圖片語法 ![]()：圖片直接顯示、PDF 由預覽改寫成內嵌 viewer（見 preview.js embedPdf）。
+  // 其餘附件用一般連結 []()（點擊於新分頁開啟 / 下載）。
+  const isPdf = /\.pdf$/i.test(item.name);
+  const md = (item.isImage || isPdf ? "![" : "[") + label + "](" + rel + ")";
   insertIntoEditor(md);
   showToast("已插入：" + label, "success");
   closeAssetModal();

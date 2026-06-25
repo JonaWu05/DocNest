@@ -375,8 +375,8 @@ body.resizing-sidebar {
 
 /* 單欄預覽模式：限制閱讀寬度並置中，長行更好讀（分割模式維持滿版） */
 #content.preview #preview-pane {
-  padding-left: max(32px, (100% - 860px) / 2);
-  padding-right: max(32px, (100% - 860px) / 2);
+  padding-left: max(32px, (100% - 1300px) / 2);
+  padding-right: max(32px, (100% - 1300px) / 2);
 }
 
 #preview-pane img {
@@ -1733,4 +1733,25 @@ body.dark #collab-external-bar {
 /* 靜止約 2 秒後 / 游標位置未變時隱藏名稱，只留游標線（由 y-codemirror 加上 hide-name） */
 .remote-caret.hide-name > div {
   display: none;
+}
+
+/* ===== 預覽：內嵌 PDF（![名稱](檔案.pdf) 由 preview.js embedPdf 改寫）===== */
+.pdf-embed {
+  margin: 12px 0;
+}
+
+.pdf-embed-frame {
+  width: 100%;
+  /* 依寬度做成接近 A4 直式的比例（1:1.46，比 1:1.414 略高以容納檢視器工具列），
+     讓一頁 A4 在框內完整顯示、不必在框內捲動（隨整頁一起捲即可）。 */
+  aspect-ratio: 1 / 1.46;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+}
+
+.pdf-embed-link {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 13px;
 }
