@@ -3,6 +3,8 @@ import { state } from "./state.js";
 import { showToast } from "./ui.js";
 import { renderPreview } from "./preview.js";
 
+// exportPDF 匯出目前文件為 PDF：先把最新內容渲染成預覽，再呼叫瀏覽器列印
+// （列印樣式只留預覽、隱藏其餘介面），由使用者於對話框另存為 PDF。
 export function exportPDF() {
   if (!state.currentPath) { showToast("請先開啟檔案", "info"); return; }
   // 取得最新內容並渲染預覽（列印樣式會強制顯示預覽、隱藏其餘介面）

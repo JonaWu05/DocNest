@@ -8,7 +8,7 @@ import { closeTrash } from "./trash.js";
 
 const trashModal = document.getElementById("trash-modal");
 
-// 用 capture 階段攔截，確保比 CodeMirror 與瀏覽器預設行為先處理
+// initShortcuts 註冊全域快捷鍵；以 capture 階段攔截，確保比 CodeMirror 與瀏覽器預設行為先處理。
 export function initShortcuts() {
   document.addEventListener("keydown", (e) => {
     const mod = e.ctrlKey || e.metaKey;
