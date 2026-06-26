@@ -132,6 +132,7 @@ func (a *Auth) Middleware() gin.HandlerFunc {
 
 // ===== 登入限流 =====
 
+// loginBlocked 判斷某 IP 是否因連續登入失敗達上限、且仍在封鎖視窗內。
 func (a *Auth) loginBlocked(ip string) bool {
 	a.loginMu.Lock()
 	defer a.loginMu.Unlock()
@@ -142,6 +143,7 @@ func (a *Auth) loginBlocked(ip string) bool {
 	return at.failures >= loginMaxFailures
 }
 
+// recordLoginFailure 累計某 IP 的登入失敗次數（視窗過期則重新計）；紀錄偏多時機會式清掉已過期項目。
 func (a *Auth) recordLoginFailure(ip string) {
 	a.loginMu.Lock()
 	defer a.loginMu.Unlock()
@@ -162,6 +164,7 @@ func (a *Auth) recordLoginFailure(ip string) {
 	}
 }
 
+// resetLoginFailures 清除某 IP 的登入失敗紀錄（登入成功後呼叫）。
 func (a *Auth) resetLoginFailures(ip string) {
 	a.loginMu.Lock()
 	defer a.loginMu.Unlock()

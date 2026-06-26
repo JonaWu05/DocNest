@@ -101,6 +101,7 @@ func New(a *auth.Auth, az *authz.Authz, cfg *config.Config) *Hub {
 	}
 }
 
+// frame 在負載前加上 1 byte tag，組成一個 WebSocket 二進位 frame。
 func frame(tag byte, payload []byte) []byte {
 	b := make([]byte, 1+len(payload))
 	b[0] = tag
@@ -364,6 +365,7 @@ func (c *client) trySend(data []byte) {
 	}
 }
 
+// readPump 持續讀取客戶端訊息並交給 handleFrame；連線出錯即收尾（removeClient 並關閉連線）。
 func (c *client) readPump() {
 	defer func() {
 		c.hub.removeClient(c)
@@ -386,6 +388,7 @@ func (c *client) readPump() {
 	}
 }
 
+// writePump 從 send channel 取訊息寫到連線，並定期送 ping 維持連線。
 func (c *client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {

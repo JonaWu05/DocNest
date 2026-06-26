@@ -47,6 +47,7 @@ type TrashItem struct {
 	DeletedAt string `json:"deletedAt"`
 }
 
+// trashDir 回傳回收筒目錄的絕對路徑（DOC_ROOT/.trash）。
 func (f *Files) trashDir() string { return filepath.Join(f.store.Root, trashDirName) }
 
 // underTrash 判斷某 DOC_ROOT 相對路徑是否位於 .trash 內。
@@ -76,6 +77,7 @@ func (f *Files) moveToTrash(absPath, originalRel, subject string, isDir bool) er
 	return os.WriteFile(filepath.Join(entryDir, "meta.json"), data, 0o644)
 }
 
+// readTrashMeta 讀取並解析某回收項目（id）的 meta.json。
 func (f *Files) readTrashMeta(id string) (trashMeta, error) {
 	var m trashMeta
 	data, err := os.ReadFile(filepath.Join(f.trashDir(), id, "meta.json"))
