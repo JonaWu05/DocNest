@@ -3,8 +3,9 @@ import { API_BASE } from "./state.js";
 
 const TOKEN_KEY = "auth_token";
 
-// 改用 localStorage：token 會保留到 JWT 過期（JWT_EXPIRE_HOURS）或登出為止，
-// 關閉瀏覽器後重開不需重新登入（sessionStorage 則會在關閉分頁時清除）。
+// getToken / setToken / clearToken 讀寫 / 清除 token。改用 localStorage：token 會保留到
+// JWT 過期（JWT_EXPIRE_HOURS）或登出為止，關閉瀏覽器後重開不需重新登入
+// （sessionStorage 則會在關閉分頁時清除）。
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }

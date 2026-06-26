@@ -86,6 +86,7 @@ async function ensureEditor() {
   state.easyMDE.codemirror.on("scroll", syncFromEditor);
 }
 
+// setEditorValue 以程式化方式設定編輯器內容；suppressChange 暫時忽略 change 事件，避免誤標未儲存。
 export function setEditorValue(text) {
   state.suppressChange = true;
   state.easyMDE.value(text);
@@ -184,6 +185,7 @@ export async function applyMode(mode) {
 }
 
 // ===== 自動儲存排程 =====
+// scheduleAutosave 於開啟自動儲存時重設延遲計時器（停止輸入 AUTOSAVE_DELAY 後靜默存檔）。
 export function scheduleAutosave() {
   if (!autosaveToggle.checked) return;
   if (state.autosaveTimer) clearTimeout(state.autosaveTimer);
@@ -251,6 +253,8 @@ export async function insertIntoEditor(md) {
 }
 
 // ===== 開啟檔案 =====
+// openFile 讀取指定檔案內容並切到預覽：先確認未存變更、收掉舊共編房間，再更新狀態與工具列。
+// labelEl 為檔案樹節點，用於高亮與判斷可寫；無則預設可寫（伺服器端仍會擋）。
 export async function openFile(path, labelEl) {
   // 點同一個已開啟且無未存變更的檔案：不需重抓（也避免無謂的 fetch）
   if (path === state.currentPath && !state.isDirty) return;
@@ -293,11 +297,13 @@ export async function openFile(path, labelEl) {
   }
 }
 
+// openFileByPath 以路徑開檔：先在檔案樹找對應節點（供高亮 / 權限判斷）再呼叫 openFile。
 export function openFileByPath(path) {
   const label = document.querySelector('.tree-label[data-path="' + CSS.escape(path) + '"]');
   return openFile(path, label);
 }
 
+// resetWorkspace 清空工作區回到「未開啟檔案」：收掉共編房間、重設狀態、停用工具列、通知 presence 離開。
 export function resetWorkspace() {
   disconnectCollab(); // 關閉工作區：收掉共編房間
   state.currentPath = null;

@@ -33,6 +33,7 @@ function expandAncestors(path) {
 }
 
 // ===== 載入檔案樹 =====
+// loadFileTree 向 /api/files 取檔案樹並渲染；重建前後保留捲動位置、展開狀態、目前選取與搜尋條件。
 export async function loadFileTree() {
   const savedScroll = fileTreeEl.scrollTop; // 重建前記下捲動位置，重建後還原
   fileTreeEl.innerHTML = '<div class="empty-hint">載入中…</div>';
@@ -69,6 +70,7 @@ export function filterFileTree(keyword) {
   applyFilter(currentFilter);
 }
 
+// applyFilter 依關鍵字就地篩選已渲染的樹（不重建 DOM）；無命中時顯示提示。
 function applyFilter(keyword) {
   const kw = keyword.toLowerCase();
   let anyMatch = false;
@@ -258,6 +260,7 @@ export async function createItem(type, baseDir) {
 }
 
 // ===== 檔案管理：重新命名 / 移動 =====
+// renameItem 詢問新路徑後呼叫 /api/rename；若改的是目前開啟的檔案，同步更新其狀態與顯示。
 async function renameItem(node) {
   const newPath = await promptModal("請輸入新的路徑（相對於文件根目錄）：", node.path);
   if (!newPath || newPath.trim() === "" || newPath.trim() === node.path) return;
@@ -282,6 +285,7 @@ async function renameItem(node) {
 }
 
 // ===== 檔案管理：刪除 =====
+// deleteItem 二次確認後軟刪除（移入回收筒）；刪到目前開啟的檔案時重置工作區。
 async function deleteItem(node) {
   const label = node.isDir ? "資料夾（含底下所有內容）" : "檔案";
   if (!(await confirmModal("確定要刪除此" + label + "嗎？可從資源回收筒還原。\n" + node.path, { okText: "刪除" }))) return;

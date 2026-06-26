@@ -18,6 +18,7 @@ export function onMessage(type, fn) {
   handlers[type] = fn;
 }
 
+// showReconnecting / hideReconnecting 顯示 / 隱藏「連線中斷，嘗試重新連線…」提示。
 function showReconnecting() {
   if (reconnectToast) reconnectToast.classList.remove("hidden");
 }
@@ -57,6 +58,7 @@ export function connectWS() {
   socket.addEventListener("error", () => {});
 }
 
+// scheduleReconnect 以指數退避排程下一次重連（已排程則略過，避免疊加）。
 function scheduleReconnect() {
   if (reconnectTimer) return;
   // 指數退避：1s, 2s, 4s … 上限 30s，避免斷線時固定頻率猛撞伺服器

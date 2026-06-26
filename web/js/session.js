@@ -18,6 +18,7 @@ const loginPass = document.getElementById("login-password");
 const discordBtn = document.getElementById("discord-login-btn");
 const logoutBtn = document.getElementById("logout-btn");
 
+// showLogin / showApp 切換登入頁與主介面的顯示。
 function showLogin() {
   appView.classList.add("hidden");
   loginView.classList.remove("hidden");
@@ -53,6 +54,7 @@ async function enterAppWithMe() {
   }
 }
 
+// logout 主動登出：關閉 WebSocket、清除 token、回到登入頁。
 function logout() {
   disconnectWS(); // 主動關閉 WebSocket，不再自動重連
   clearToken();

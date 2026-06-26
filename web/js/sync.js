@@ -110,6 +110,7 @@ async function overwritePending() {
   await saveFile(false, true); // force=1
 }
 
+// hideBar 收起提示條並重設待處理狀態。
 function hideBar() {
   pendingPath = null;
   conflictMode = false;

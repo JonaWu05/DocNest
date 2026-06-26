@@ -4,7 +4,8 @@ import { tocList, previewPane } from "./dom.js";
 import { applyMode } from "./editor.js";
 import { currentTokens } from "./markdown.js";
 
-// 索引與 renderPreview 為標題加的 id（toc-h-i）一一對應
+// buildTOC 依目前文件的標題重建大綱清單（與預覽共用同一次 lex）。
+// 索引與 renderPreview 為標題加的 id（toc-h-i）一一對應。
 export function buildTOC() {
   if (!state.currentPath) {
     tocList.innerHTML = '<div class="toc-empty">未開啟檔案</div>';
@@ -37,6 +38,7 @@ export function buildTOC() {
 // TOC 項目與預覽標題以相同索引一一對應（見 renderPreview 的 toc-h-i 與上方建立順序）。
 let spyObserver = null;
 
+// setActiveTocItem 高亮第 idx 個 TOC 項目，必要時捲動使其進入可視範圍（不干擾使用者）。
 function setActiveTocItem(idx) {
   const items = tocList.querySelectorAll(".toc-item");
   items.forEach((it, i) => it.classList.toggle("active", i === idx));

@@ -81,16 +81,19 @@ async function deleteAsset(item, ev) {
 }
 
 // ===== 附件庫：開關與載入 =====
+// openAssetModal 開啟附件庫：載入目的地資料夾下拉與附件清單。
 export function openAssetModal() {
   if (!state.currentPath) return;
   assetModal.classList.remove("hidden");
   populateTargetFolders();
   loadAssets();
 }
+// closeAssetModal 關閉附件庫。
 export function closeAssetModal() {
   assetModal.classList.add("hidden");
 }
 
+// loadAssets 向 /api/assets 取附件清單並渲染為縮圖格。
 async function loadAssets() {
   assetGrid.innerHTML = "";
   assetHint.textContent = "載入中…";
@@ -110,6 +113,7 @@ async function loadAssets() {
   }
 }
 
+// renderAssetItem 建立單一附件項目（圖片顯示縮圖、其餘顯示檔案圖示；附刪除鈕，點選即插入）。
 function renderAssetItem(item) {
   const el = document.createElement("div");
   el.className = "asset-item";

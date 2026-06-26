@@ -17,6 +17,7 @@ export function handlePresenceUpdate(payload) {
   if (popoverOpen) renderOnlinePopover(); // 浮層開著時即時更新內容
 }
 
+// chip 建立一個 presence 標籤元素（kind 決定樣式：editing / viewing / other）。
 function chip(text, kind) {
   const el = document.createElement("span");
   el.className = "presence-chip " + kind;
@@ -24,6 +25,7 @@ function chip(text, kind) {
   return el;
 }
 
+// renderPresence 更新右上角在線人數，並在 presence 列列出與我同檔者（編輯 / 預覽中）與其他在線者。
 function renderPresence() {
   // 右上角在線人數（含自己）
   if (onlineCountEl) onlineCountEl.textContent = "在線 " + onlineUsers.length + " 人";
@@ -65,6 +67,7 @@ function statusOf(u) {
   return { icon: "fa-circle", cls: "idle", text: "在線" };
 }
 
+// ensurePopover 首次開啟時建立在線成員清單浮層的容器（之後重用）。
 function ensurePopover() {
   if (onlinePopover) return;
   onlinePopover = document.createElement("div");
@@ -72,6 +75,7 @@ function ensurePopover() {
   document.body.appendChild(onlinePopover);
 }
 
+// renderOnlinePopover 重繪在線成員清單（自己排最前，顯示各人狀態與所在文件）。
 function renderOnlinePopover() {
   if (!onlinePopover) return;
   const me = state.username;
@@ -113,6 +117,7 @@ function renderOnlinePopover() {
   });
 }
 
+// openPopover 開啟在線成員浮層並對齊「在線 N 人」下方；綁定點外面 / Esc 關閉。
 function openPopover() {
   ensurePopover();
   renderOnlinePopover();
@@ -126,6 +131,7 @@ function openPopover() {
   document.addEventListener("keydown", onEsc, true);
 }
 
+// closePopover 關閉在線成員浮層並解除其事件監聽。
 function closePopover() {
   if (!popoverOpen) return;
   onlinePopover.classList.add("hidden");
@@ -134,10 +140,12 @@ function closePopover() {
   document.removeEventListener("keydown", onEsc, true);
 }
 
+// onOutside 點浮層與「在線 N 人」觸發鈕以外的區域即關閉。
 function onOutside(e) {
   if (onlineCountEl.contains(e.target) || onlinePopover.contains(e.target)) return;
   closePopover();
 }
+// onEsc 按 Esc 關閉浮層。
 function onEsc(e) { if (e.key === "Escape") closePopover(); }
 
 if (onlineCountEl) {
