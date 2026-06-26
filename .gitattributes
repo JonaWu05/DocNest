@@ -1,2 +1,4 @@
 # 第三方相依（pinned 版本，非本專案程式碼）：排除於 GitHub 語言統計之外
 web/vendor/** linguist-vendored
+# 建置 / 壓測用的開發工具腳本
+scripts/** linguist-vendored
