@@ -10,15 +10,18 @@ const modal = document.getElementById("trash-modal");
 const listEl = document.getElementById("trash-list");
 const hintEl = document.getElementById("trash-hint");
 
+// openTrash 開啟資源回收筒並載入項目。
 export function openTrash() {
   modal.classList.remove("hidden");
   loadTrash();
 }
 
+// closeTrash 關閉資源回收筒。
 export function closeTrash() {
   modal.classList.add("hidden");
 }
 
+// loadTrash 向後端取回收筒項目並渲染（後端只回傳對其原始路徑有寫入權者）。
 async function loadTrash() {
   listEl.innerHTML = "";
   hintEl.textContent = "載入中…";
@@ -37,6 +40,7 @@ async function loadTrash() {
   }
 }
 
+// renderItem 建立單一回收筒項目列（名稱 / 原始路徑 / 刪除時間，附還原與永久刪除鈕）。
 function renderItem(item) {
   const el = document.createElement("div");
   el.className = "trash-item";
@@ -80,6 +84,7 @@ function formatTime(s) {
   return isNaN(d.getTime()) ? s : d.toLocaleString();
 }
 
+// restore 還原項目回原始位置，並重載清單與檔案樹以反映變更。
 async function restore(item) {
   try {
     const res = await authFetch(API_BASE + "/api/trash/restore?id=" + encodeURIComponent(item.id), { method: "POST" });
@@ -92,6 +97,7 @@ async function restore(item) {
   }
 }
 
+// purge 永久刪除項目（先以對話框二次確認，無法復原）。
 async function purge(item) {
   if (!(await confirmModal("永久刪除「" + item.name + "」？此動作無法復原。", { okText: "永久刪除" }))) return;
   try {

@@ -21,6 +21,7 @@ function flatten(nodes, acc) {
   return acc;
 }
 
+// openDocPicker 開啟分頁連結選擇器：抓 /api/files、攤平成文件清單（排除目前文件）後渲染。
 export async function openDocPicker() {
   if (!state.currentPath) return;
   docModal.classList.remove("hidden");
@@ -38,10 +39,12 @@ export async function openDocPicker() {
   }
 }
 
+// closeDocPicker 關閉分頁連結選擇器。
 export function closeDocPicker() {
   docModal.classList.add("hidden");
 }
 
+// renderDocList 依關鍵字過濾並渲染文件清單（比對路徑，不分大小寫）。
 export function renderDocList(keyword) {
   const kw = (keyword || "").trim().toLowerCase();
   const docs = kw ? allDocs.filter(d => d.path.toLowerCase().includes(kw)) : allDocs;
@@ -53,6 +56,7 @@ export function renderDocList(keyword) {
   docs.forEach(d => docList.appendChild(renderDocItem(d)));
 }
 
+// renderDocItem 建立單一文件項目（顯示名稱與路徑，點擊插入分頁連結）。
 function renderDocItem(doc) {
   const el = document.createElement("div");
   el.className = "doc-item";
