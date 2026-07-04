@@ -33,11 +33,11 @@ func (a *Auth) OverviewHandler(c *gin.Context) {
 		localOut = append(localOut, gin.H{"username": u, "groups": a.az.GroupsOf("local:" + u)})
 	}
 
-	ids := a.accounts.DiscordIDs()
-	sort.Strings(ids)
-	discordOut := make([]gin.H, 0, len(ids))
-	for _, id := range ids {
-		discordOut = append(discordOut, gin.H{"id": id, "groups": a.az.GroupsOf("discord:" + id)})
+	dlist := a.accounts.DiscordList()
+	sort.Slice(dlist, func(i, j int) bool { return dlist[i].ID < dlist[j].ID })
+	discordOut := make([]gin.H, 0, len(dlist))
+	for _, d := range dlist {
+		discordOut = append(discordOut, gin.H{"id": d.ID, "label": d.Label, "groups": a.az.GroupsOf("discord:" + d.ID)})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -130,23 +130,45 @@ func (a *Auth) DeleteUserHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-// AddDiscordHandler 處理 POST /api/admin/discord/add：加入 Discord 登入白名單。
+// AddDiscordHandler 處理 POST /api/admin/discord/add：加入 Discord 登入白名單（label 為選填備註）。
 func (a *Auth) AddDiscordHandler(c *gin.Context) {
 	if !a.adminGuard(c) {
 		return
 	}
 	var req struct {
-		ID string `json:"id"`
+		ID    string `json:"id"`
+		Label string `json:"label"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "請求格式錯誤"})
 		return
 	}
-	if err := a.accounts.AddDiscord(req.ID); err != nil {
+	if err := a.accounts.AddDiscord(req.ID, req.Label); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	slog.Info("管理員新增 Discord 白名單", "by", c.GetString("username"), "id", req.ID)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// SetDiscordLabelHandler 處理 POST /api/admin/discord/label：更新某 Discord 白名單項目的顯示備註。
+func (a *Auth) SetDiscordLabelHandler(c *gin.Context) {
+	if !a.adminGuard(c) {
+		return
+	}
+	var req struct {
+		ID    string `json:"id"`
+		Label string `json:"label"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "請求格式錯誤"})
+		return
+	}
+	if err := a.accounts.SetDiscordLabel(req.ID, req.Label); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	slog.Info("管理員更新 Discord 備註", "by", c.GetString("username"), "id", req.ID, "label", req.Label)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 

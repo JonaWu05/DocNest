@@ -36,6 +36,7 @@ import (
 	"github.com/JonaWu05/DocNest/internal/files"
 	"github.com/JonaWu05/DocNest/internal/filewatch"
 	"github.com/JonaWu05/DocNest/internal/hub"
+	"github.com/JonaWu05/DocNest/internal/logx"
 	"github.com/JonaWu05/DocNest/internal/store"
 	"github.com/JonaWu05/DocNest/internal/upload"
 )
@@ -50,6 +51,9 @@ func redactToken(path string) string {
 }
 
 // accessLogger 為以 slog 輸出的存取紀錄中介層（取代 gin 內建文字格式），並遮罩 query 中的 token。
+// 依回應狀態分級以提升可讀性：5xx→Error、4xx→Warn；其餘成功請求中，靜態資源（/static/*）
+// 降為 Debug（預設等級 Info 下隱藏，避免一次頁面載入噴出大量 304），API / 認證 / WebSocket
+// 等有意義的請求維持 Info。要排查靜態資源時把 log level 調成 Debug 即可全數顯示。
 func accessLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -58,14 +62,25 @@ func accessLogger() gin.HandlerFunc {
 		if c.Request.URL.Path == "/healthz" {
 			return
 		}
-		path := c.Request.URL.Path
+		status := c.Writer.Status()
+		fullPath := c.Request.URL.Path
 		if raw := c.Request.URL.RawQuery; raw != "" {
-			path += "?" + raw
+			fullPath += "?" + raw
 		}
-		slog.Info("request",
-			"status", c.Writer.Status(),
+
+		level := slog.LevelInfo
+		switch {
+		case status >= 500:
+			level = slog.LevelError
+		case status >= 400:
+			level = slog.LevelWarn
+		case strings.HasPrefix(c.Request.URL.Path, "/static/"):
+			level = slog.LevelDebug
+		}
+		slog.Log(c.Request.Context(), level, "request",
+			"status", status,
 			"method", c.Request.Method,
-			"path", redactToken(path),
+			"path", redactToken(fullPath),
 			"ip", c.ClientIP(),
 			"latency", time.Since(start).String(),
 		)
@@ -73,8 +88,9 @@ func accessLogger() gin.HandlerFunc {
 }
 
 func main() {
-	// 結構化日誌：以 slog 文字格式輸出到 stderr（是否落檔由部署環境決定，程式不自管 log 檔）。
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	// 結構化日誌：slog 文字格式輸出到 stderr（是否落檔由部署環境決定，程式不自管 log 檔）。
+	// 終端輸出時把 level 欄位上色以利閱讀；非終端 / NO_COLOR 時自動退回原生無色格式。
+	slog.SetDefault(slog.New(logx.New(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	// 載入 .env（不存在則略過，改用系統環境變數）
 	_ = godotenv.Load()
@@ -225,6 +241,7 @@ func main() {
 		api.POST("/admin/user/password", au.SetUserPasswordHandler) // 重設帳號密碼
 		api.POST("/admin/user/delete", au.DeleteUserHandler)        // 刪除本地帳號
 		api.POST("/admin/discord/add", au.AddDiscordHandler)        // Discord 白名單新增
+		api.POST("/admin/discord/label", au.SetDiscordLabelHandler) // Discord 顯示備註更新
 		api.POST("/admin/discord/remove", au.RemoveDiscordHandler)  // Discord 白名單移除
 		api.POST("/admin/group/member", au.SetGroupMemberHandler)   // 群組成員指派
 		api.GET("/online-count", h.OnlineCountHandler)

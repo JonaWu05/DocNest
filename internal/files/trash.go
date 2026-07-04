@@ -156,6 +156,7 @@ func (f *Files) RestoreTrash(c *gin.Context) {
 	}
 	os.RemoveAll(filepath.Join(f.trashDir(), id)) // 清掉殘留的 meta 與空目錄
 	f.invalidateFor(m.Original)
+	slog.Info("還原回收項目", "by", c.GetString("username"), "path", m.Original)
 	c.JSON(http.StatusOK, gin.H{"message": "已還原", "path": m.Original})
 }
 
@@ -178,6 +179,7 @@ func (f *Files) PurgeTrash(c *gin.Context) {
 		httpx.ServerError(c, "永久刪除失敗", err)
 		return
 	}
+	slog.Info("永久刪除回收項目", "by", c.GetString("username"), "path", m.Original)
 	c.JSON(http.StatusOK, gin.H{"message": "已永久刪除"})
 }
 

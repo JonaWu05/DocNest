@@ -61,21 +61,29 @@ function render() {
 
   discordList.innerHTML = "";
   overview.discord.forEach((d) => {
-    discordList.appendChild(row("discord:" + d.id, d.id, d.groups, [
+    // 顯示備註（沒有則顯示 ID）；有備註時把 ID 當副標，方便對照
+    discordList.appendChild(row("discord:" + d.id, d.label || d.id, d.groups, [
+      btn("重新命名", () => renameDiscord(d.id, d.label)),
       btn("移除", () => removeDiscord(d.id), "danger"),
-    ]));
+    ], d.label ? d.id : ""));
   });
   if (overview.discord.length === 0) discordList.appendChild(emptyHint("尚無 Discord 白名單"));
 }
 
-// row 建立一列：名稱 + 群組切換 chips + 操作按鈕。
-function row(subject, name, groups, actions) {
+// row 建立一列：名稱（可帶副標）+ 群組切換 chips + 操作按鈕。
+function row(subject, name, groups, actions, subtitle) {
   const el = document.createElement("div");
   el.className = "admin-row";
 
   const nameEl = document.createElement("div");
   nameEl.className = "admin-row-name";
   nameEl.textContent = name;
+  if (subtitle) {
+    const sub = document.createElement("span");
+    sub.className = "admin-row-sub";
+    sub.textContent = subtitle;
+    nameEl.appendChild(sub);
+  }
   el.appendChild(nameEl);
 
   const groupsEl = document.createElement("div");
@@ -151,6 +159,14 @@ function removeDiscord(id) {
   });
 }
 
+function renameDiscord(id, current) {
+  return withReload(async () => {
+    const label = await promptModal("為此 Discord 成員設定備註（ID：" + id + "）：", current || "");
+    if (label === null) return; // 取消（空字串代表清除備註，允許）
+    await api("/api/admin/discord/label", jsonBody({ id, label }));
+  });
+}
+
 addUserForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const username = document.getElementById("new-username").value.trim();
@@ -164,8 +180,9 @@ addUserForm.addEventListener("submit", (e) => {
 addDiscordForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const id = document.getElementById("new-discord-id").value.trim();
+  const label = document.getElementById("new-discord-label").value.trim();
   withReload(async () => {
-    await api("/api/admin/discord/add", jsonBody({ id }));
+    await api("/api/admin/discord/add", jsonBody({ id, label }));
     addDiscordForm.reset();
   });
 });

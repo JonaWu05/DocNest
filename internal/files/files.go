@@ -3,6 +3,7 @@ package files
 
 import (
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -303,6 +304,7 @@ func (f *Files) DeleteFile(c *gin.Context) {
 	}
 
 	f.invalidateFor(rel)
+	slog.Info("刪除（移入回收筒）", "by", c.GetString("username"), "path", rel)
 	c.JSON(http.StatusOK, gin.H{"message": "已移至回收筒"})
 }
 
@@ -354,6 +356,7 @@ func (f *Files) Create(c *gin.Context) {
 	}
 
 	f.invalidateFor(f.store.RelOf(absPath))
+	slog.Info("建立", "by", c.GetString("username"), "type", itemType, "path", f.store.RelOf(absPath))
 	c.JSON(http.StatusOK, gin.H{"message": "建立成功"})
 }
 
@@ -417,6 +420,7 @@ func (f *Files) Rename(c *gin.Context) {
 	// 改名/移動可能跨越 doc 樹與 assets 樹，兩端各自讓對應快取失效。
 	f.invalidateFor(f.store.RelOf(oldAbs))
 	f.invalidateFor(f.store.RelOf(newAbs))
+	slog.Info("重新命名", "by", c.GetString("username"), "from", f.store.RelOf(oldAbs), "to", f.store.RelOf(newAbs))
 	c.JSON(http.StatusOK, gin.H{"message": "重新命名成功"})
 }
 

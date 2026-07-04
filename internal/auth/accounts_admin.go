@@ -117,19 +117,64 @@ func (a *Accounts) DeleteUser(username string) error {
 	})
 }
 
-// AddDiscord 把一個 Discord User ID 加入登入白名單（冪等）。
-func (a *Accounts) AddDiscord(id string) error {
+// AddDiscord 把一個 Discord User ID 加入登入白名單（冪等 upsert）。
+// 已存在時：僅在有提供非空 label 時更新其備註，否則不動（不覆蓋既有備註）。
+func (a *Accounts) AddDiscord(id, label string) error {
 	id = strings.TrimSpace(id)
+	label = strings.TrimSpace(label)
 	if id == "" {
 		return fmt.Errorf("Discord User ID 不可為空")
 	}
 	return a.mutate(func(f *accountsFile) error {
-		for _, existing := range f.DiscordAllowed {
-			if strings.TrimSpace(existing) == id {
+		for i := range f.DiscordAllowed {
+			if strings.TrimSpace(f.DiscordAllowed[i].ID) == id {
+				if label != "" {
+					f.DiscordAllowed[i].Label = label
+				}
 				return nil // 已存在，冪等
 			}
 		}
-		f.DiscordAllowed = append(f.DiscordAllowed, id)
+		f.DiscordAllowed = append(f.DiscordAllowed, discordEntry{ID: id, Label: label})
+		return nil
+	})
+}
+
+// SetDiscordLabel 更新既有 Discord 白名單項目的顯示備註（ID 不存在則回錯）。
+func (a *Accounts) SetDiscordLabel(id, label string) error {
+	id = strings.TrimSpace(id)
+	label = strings.TrimSpace(label)
+	return a.mutate(func(f *accountsFile) error {
+		for i := range f.DiscordAllowed {
+			if strings.TrimSpace(f.DiscordAllowed[i].ID) == id {
+				f.DiscordAllowed[i].Label = label
+				return nil
+			}
+		}
+		return fmt.Errorf("Discord ID 不存在：%s", id)
+	})
+}
+
+// NoteDiscordLogin 於 Discord 登入通過白名單後呼叫：若該 ID 的備註仍為空，
+// 自動補上其當下的 Discord 用戶名（手動備註優先，不覆蓋；已有備註則不寫檔）。
+func (a *Accounts) NoteDiscordLogin(id, username string) error {
+	id = strings.TrimSpace(id)
+	username = strings.TrimSpace(username)
+	if id == "" || username == "" {
+		return nil
+	}
+	// 先讀當下快照：不在白名單或已有備註就不動（避免每次登入都寫檔）。
+	a.mu.RLock()
+	label, ok := a.snap.discordAllowed[id]
+	a.mu.RUnlock()
+	if !ok || label != "" {
+		return nil
+	}
+	return a.mutate(func(f *accountsFile) error {
+		for i := range f.DiscordAllowed {
+			if strings.TrimSpace(f.DiscordAllowed[i].ID) == id && strings.TrimSpace(f.DiscordAllowed[i].Label) == "" {
+				f.DiscordAllowed[i].Label = username
+			}
+		}
 		return nil
 	})
 }
@@ -140,7 +185,7 @@ func (a *Accounts) RemoveDiscord(id string) error {
 	return a.mutate(func(f *accountsFile) error {
 		filtered := f.DiscordAllowed[:0:0]
 		for _, existing := range f.DiscordAllowed {
-			if strings.TrimSpace(existing) != id {
+			if strings.TrimSpace(existing.ID) != id {
 				filtered = append(filtered, existing)
 			}
 		}
@@ -156,17 +201,6 @@ func (a *Accounts) LocalUsernames() []string {
 	out := make([]string, 0, len(a.snap.users))
 	for name := range a.snap.users {
 		out = append(out, name)
-	}
-	return out
-}
-
-// DiscordIDs 回傳所有 Discord 白名單 ID（供管理面板列出）。
-func (a *Accounts) DiscordIDs() []string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make([]string, 0, len(a.snap.discordAllowed))
-	for id := range a.snap.discordAllowed {
-		out = append(out, id)
 	}
 	return out
 }

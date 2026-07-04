@@ -8,17 +8,40 @@ import (
 	"sync"
 )
 
+// discordEntry 為 Discord 白名單的一筆：穩定身分鍵 ID + 給人辨識用的顯示備註 Label。
+// 為相容早期「純字串陣列」格式，UnmarshalJSON 同時接受裸字串（視為只有 ID、無 Label）。
+type discordEntry struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+}
+
+// UnmarshalJSON 接受兩種寫法：裸字串 "123"（舊格式）或物件 {"id":"123","label":"小明"}。
+func (d *discordEntry) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil { // 舊格式：裸字串
+		d.ID, d.Label = strings.TrimSpace(s), ""
+		return nil
+	}
+	type alias discordEntry // 避免遞迴呼叫本方法
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	d.ID, d.Label = strings.TrimSpace(a.ID), strings.TrimSpace(a.Label)
+	return nil
+}
+
 // accountsFile 對應 accounts.json 的整體結構：本地帳號與 Discord 登入白名單。
-// 密碼一律以 bcrypt hash 儲存（不存明文）；Discord 白名單為允許登入的 User ID。
+// 密碼一律以 bcrypt hash 儲存（不存明文）；Discord 白名單以 ID 為身分鍵、Label 僅供辨識。
 type accountsFile struct {
 	Local          map[string]string `json:"local"`           // username -> bcrypt hash
-	DiscordAllowed []string          `json:"discord_allowed"` // 允許登入的 Discord User ID
+	DiscordAllowed []discordEntry    `json:"discord_allowed"` // 允許登入的 Discord User ID + 顯示備註
 }
 
 // accountsSnapshot 為一份「載入完成後即不可變」的帳號設定，供熱重載整份替換（swap 指標）。
 type accountsSnapshot struct {
 	users          map[string]string // username -> bcrypt hash
-	discordAllowed map[string]bool   // Discord User ID -> true
+	discordAllowed map[string]string // Discord User ID -> 顯示備註（可為空字串）
 }
 
 // Accounts 保存一份可熱重載的帳號設定（本地帳號 + Discord 白名單）。
@@ -60,7 +83,7 @@ func parseAccounts(path string) (*accountsSnapshot, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			slog.Warn("找不到帳號設定檔，以空帳號啟動（無法本地登入、Discord 一律拒絕）；放入設定檔後可經管理員重新載入生效", "path", path)
-			return &accountsSnapshot{users: map[string]string{}, discordAllowed: map[string]bool{}}, nil
+			return &accountsSnapshot{users: map[string]string{}, discordAllowed: map[string]string{}}, nil
 		}
 		return nil, err
 	}
@@ -82,7 +105,7 @@ func parseAccountsData(data []byte) (*accountsSnapshot, error) {
 
 	s := &accountsSnapshot{
 		users:          make(map[string]string, len(f.Local)),
-		discordAllowed: make(map[string]bool, len(f.DiscordAllowed)),
+		discordAllowed: make(map[string]string, len(f.DiscordAllowed)),
 	}
 	for name, hash := range f.Local {
 		name = strings.TrimSpace(name)
@@ -97,9 +120,9 @@ func parseAccountsData(data []byte) (*accountsSnapshot, error) {
 		}
 		s.users[name] = hash
 	}
-	for _, id := range f.DiscordAllowed {
-		if id = strings.TrimSpace(id); id != "" {
-			s.discordAllowed[id] = true
+	for _, e := range f.DiscordAllowed {
+		if id := strings.TrimSpace(e.ID); id != "" {
+			s.discordAllowed[id] = strings.TrimSpace(e.Label)
 		}
 	}
 	return s, nil
@@ -117,5 +140,23 @@ func (a *Accounts) Lookup(username string) (hash string, ok bool) {
 func (a *Accounts) IsDiscordAllowed(id string) bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	return a.snap.discordAllowed[id]
+	_, ok := a.snap.discordAllowed[id]
+	return ok
+}
+
+// DiscordItem 為對外回報的一筆 Discord 白名單（ID + 顯示備註）。
+type DiscordItem struct {
+	ID    string
+	Label string
+}
+
+// DiscordList 回傳所有 Discord 白名單（含備註），供管理面板列出。
+func (a *Accounts) DiscordList() []DiscordItem {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	out := make([]DiscordItem, 0, len(a.snap.discordAllowed))
+	for id, label := range a.snap.discordAllowed {
+		out = append(out, DiscordItem{ID: id, Label: label})
+	}
+	return out
 }

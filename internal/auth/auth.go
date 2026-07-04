@@ -234,6 +234,7 @@ func (a *Auth) LoginHandler(c *gin.Context) {
 
 	ip := c.ClientIP()
 	if a.loginBlocked(ip) {
+		slog.Warn("登入被限流", "user", req.Username, "ip", ip)
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "登入嘗試次數過多，請稍後再試"})
 		return
 	}
@@ -242,11 +243,13 @@ func (a *Auth) LoginHandler(c *gin.Context) {
 	// 帳號不存在或密碼錯誤都回傳相同訊息，避免洩漏帳號是否存在
 	if !ok {
 		a.recordLoginFailure(ip)
+		slog.Warn("登入失敗", "user", req.Username, "ip", ip)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "帳號或密碼錯誤"})
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
 		a.recordLoginFailure(ip)
+		slog.Warn("登入失敗", "user", req.Username, "ip", ip)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "帳號或密碼錯誤"})
 		return
 	}
@@ -258,6 +261,7 @@ func (a *Auth) LoginHandler(c *gin.Context) {
 	}
 
 	a.resetLoginFailures(ip)
+	slog.Info("登入成功", "user", req.Username, "type", "local", "ip", ip)
 	a.setAuthCookie(c, token) // 供 /admin 等頁面層級守門
 	c.JSON(http.StatusOK, gin.H{
 		"token":      token,
@@ -383,6 +387,7 @@ func (a *Auth) DiscordCallbackHandler(c *gin.Context) {
 
 	// 4) 白名單檢查：只有名單內的 Discord User ID 可登入
 	if !a.accounts.IsDiscordAllowed(du.ID) {
+		slog.Warn("Discord 登入被拒（未授權）", "id", du.ID, "username", du.Username, "ip", c.ClientIP())
 		c.JSON(http.StatusForbidden, gin.H{"error": "此 Discord 帳號未被授權使用本系統"})
 		return
 	}
@@ -393,6 +398,13 @@ func (a *Auth) DiscordCallbackHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "簽發 token 失敗"})
 		return
 	}
+	// 顯示備註自動補洞（A+B 的 B）：若該 ID 尚無備註，記下其當下 Discord 用戶名供管理面板辨識。
+	// 手動備註優先、僅在空時寫一次；失敗不影響登入。
+	if err := a.accounts.NoteDiscordLogin(du.ID, du.Username); err != nil {
+		slog.Warn("記錄 Discord 顯示名稱失敗", "id", du.ID, "err", err)
+	}
+	slog.Info("登入成功", "user", du.Username, "type", "discord", "id", du.ID, "ip", c.ClientIP())
+
 	a.setAuthCookie(c, jwtStr) // 供 /admin 等頁面層級守門
 	c.Redirect(http.StatusFound, "/index.html#token="+url.QueryEscape(jwtStr))
 }

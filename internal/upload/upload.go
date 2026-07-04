@@ -3,6 +3,7 @@ package upload
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -102,6 +103,7 @@ func (u *Upload) UploadFile(c *gin.Context) {
 
 	u.store.InvalidateAssets() // 新增附件，使附件清單快取失效
 
+	slog.Info("上傳附件", "by", c.GetString("username"), "path", filepath.ToSlash(storeRel), "size", fileHeader.Size)
 	c.JSON(http.StatusOK, gin.H{
 		"path":    filepath.ToSlash(storeRel),
 		"name":    origName,

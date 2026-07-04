@@ -42,8 +42,10 @@
       <h2>Discord 登入白名單</h2>
       <form class="admin-add-form" id="add-discord-form" autocomplete="off">
         <input type="text" id="new-discord-id" placeholder="Discord User ID" required>
+        <input type="text" id="new-discord-label" placeholder="備註（選填，如：JonaWu）">
         <button class="login-btn" type="submit">新增</button>
       </form>
+      <p class="admin-hint">備註僅供辨識；留空的話，該成員首次用 Discord 登入後會自動補上其用戶名。</p>
       <div class="admin-table" id="discord-list"></div>
     </section>
   </div>
