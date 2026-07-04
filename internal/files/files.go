@@ -13,10 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"markdownEditor/internal/authz"
-	"markdownEditor/internal/httpx"
-	"markdownEditor/internal/hub"
-	"markdownEditor/internal/store"
+	"github.com/JonaWu05/DocNest/internal/authz"
+	"github.com/JonaWu05/DocNest/internal/httpx"
+	"github.com/JonaWu05/DocNest/internal/hub"
+	"github.com/JonaWu05/DocNest/internal/store"
 )
 
 // tsPrefix 比對上傳檔名的「時間戳記_」前綴（對應前端 assetDisplayName 的清理規則）

@@ -14,7 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"markdownEditor/internal/store"
+	"github.com/JonaWu05/DocNest/internal/store"
 )
 
 // 權限等級（由低到高）：none < read < write；write 隱含 read，

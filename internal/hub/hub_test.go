@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"markdownEditor/internal/authz"
-	"markdownEditor/internal/config"
+	"github.com/JonaWu05/DocNest/internal/authz"
+	"github.com/JonaWu05/DocNest/internal/config"
 )
 
 // loadAuthz 在臨時目錄寫一份 permissions.json 並載入，供權限過濾測試使用。

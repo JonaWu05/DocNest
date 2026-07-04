@@ -17,8 +17,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"markdownEditor/internal/authz"
-	"markdownEditor/internal/httpx"
+	"github.com/JonaWu05/DocNest/internal/authz"
+	"github.com/JonaWu05/DocNest/internal/httpx"
 )
 
 // trashCleanInterval 為背景清除的執行頻率。

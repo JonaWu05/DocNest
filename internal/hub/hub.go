@@ -11,9 +11,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
-	"markdownEditor/internal/auth"
-	"markdownEditor/internal/authz"
-	"markdownEditor/internal/config"
+	"github.com/JonaWu05/DocNest/internal/auth"
+	"github.com/JonaWu05/DocNest/internal/authz"
+	"github.com/JonaWu05/DocNest/internal/config"
 )
 
 // ===== WebSocket 連線參數 =====

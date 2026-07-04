@@ -1,4 +1,4 @@
-module markdownEditor
+module github.com/JonaWu05/DocNest
 
 go 1.26
 

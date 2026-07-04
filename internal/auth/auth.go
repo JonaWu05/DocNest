@@ -18,8 +18,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 
-	"markdownEditor/internal/authz"
-	"markdownEditor/internal/config"
+	"github.com/JonaWu05/DocNest/internal/authz"
+	"github.com/JonaWu05/DocNest/internal/config"
 )
 
 // ===== 登入速率限制（per-IP，防暴力破解）=====

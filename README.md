@@ -82,13 +82,20 @@ go run .
 
 ```
 .
-├── main.go            # 進入點、路由、CORS、靜態服務
-├── auth.go login.go   # JWT、本地帳號、Discord OAuth
-├── files.go fs.go     # 檔案 CRUD、路徑安全、樹狀結構
-├── upload.go assets.go# 附件上傳與列舉
-├── hub.go             # WebSocket Hub（Presence / 即時通知）
-├── cmd/hashpw/        # 產生 bcrypt 密碼 hash 的小工具
-└── web/               # 前端（index.html、styles.css、js/ 模組、vendor/ 在地相依）
+├── main.go              # 進入點：載入設定、建立各服務（DI）、設定 gin 與路由、啟動
+├── internal/
+│   ├── config/          # 設定載入（環境變數）
+│   ├── store/           # 路徑安全、副檔名白名單、檔案樹、原子寫檔
+│   ├── authz/           # 權限分組判斷 + 群組成員編輯（可熱重載）
+│   ├── auth/            # JWT、登入限流、Local/Discord 登入、帳號管理、cookie 守門、/admin API
+│   ├── hub/             # WebSocket Hub（presence / 即時通知）
+│   ├── collab/          # 即時共編房間（Yjs update / awareness 中繼）
+│   ├── files/           # 檔案 CRUD、原始檔服務、資源回收筒
+│   ├── filewatch/       # 外部改檔偵測（輪詢目前開著的檔）
+│   ├── upload/          # 附件上傳與列舉
+│   └── httpx/           # HTTP 共用小工具
+├── cmd/hashpw/          # 產生 bcrypt 密碼 hash 的小工具
+└── web/                 # 前端（index.html、admin.html、styles.css、js/ 模組、vendor/ 在地相依）
 ```
 
 

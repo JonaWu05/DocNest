@@ -11,8 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 
-	"markdownEditor/internal/authz"
-	"markdownEditor/internal/config"
+	"github.com/JonaWu05/DocNest/internal/authz"
+	"github.com/JonaWu05/DocNest/internal/config"
 )
 
 // newAdminTestAuth 建立一個帶「admins 群組含 local:boss、另有 editors 群組」的 Auth，回傳它與 admin 的 subject。

@@ -29,15 +29,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
-	"markdownEditor/internal/auth"
-	"markdownEditor/internal/authz"
-	"markdownEditor/internal/collab"
-	"markdownEditor/internal/config"
-	"markdownEditor/internal/files"
-	"markdownEditor/internal/filewatch"
-	"markdownEditor/internal/hub"
-	"markdownEditor/internal/store"
-	"markdownEditor/internal/upload"
+	"github.com/JonaWu05/DocNest/internal/auth"
+	"github.com/JonaWu05/DocNest/internal/authz"
+	"github.com/JonaWu05/DocNest/internal/collab"
+	"github.com/JonaWu05/DocNest/internal/config"
+	"github.com/JonaWu05/DocNest/internal/files"
+	"github.com/JonaWu05/DocNest/internal/filewatch"
+	"github.com/JonaWu05/DocNest/internal/hub"
+	"github.com/JonaWu05/DocNest/internal/store"
+	"github.com/JonaWu05/DocNest/internal/upload"
 )
 
 // tokenQueryRE 比對 URL query 中的 token 參數值（供存取紀錄遮罩用）。

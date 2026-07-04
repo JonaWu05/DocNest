@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"markdownEditor/internal/authz"
-	"markdownEditor/internal/store"
+	"github.com/JonaWu05/DocNest/internal/authz"
+	"github.com/JonaWu05/DocNest/internal/store"
 )
 
 // TestFilterTree 驗證檔案樹依讀取權過濾、並正確標記 writable。

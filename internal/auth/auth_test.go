@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"markdownEditor/internal/authz"
-	"markdownEditor/internal/config"
+	"github.com/JonaWu05/DocNest/internal/authz"
+	"github.com/JonaWu05/DocNest/internal/config"
 )
 
 func init() { gin.SetMode(gin.TestMode) }

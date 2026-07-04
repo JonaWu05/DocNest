@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"markdownEditor/internal/store"
+	"github.com/JonaWu05/DocNest/internal/store"
 )
 
 // maxUsernameLen 為本地帳號名稱長度上限（避免異常長的輸入）。

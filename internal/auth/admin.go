@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 
-	"markdownEditor/internal/authz"
+	"github.com/JonaWu05/DocNest/internal/authz"
 )
 
 // adminGuard 確認呼叫者為管理員；否則回 403 並中止。中介層只驗 JWT，管理權限一律在此再驗一次。

@@ -12,9 +12,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"markdownEditor/internal/authz"
-	"markdownEditor/internal/httpx"
-	"markdownEditor/internal/store"
+	"github.com/JonaWu05/DocNest/internal/authz"
+	"github.com/JonaWu05/DocNest/internal/httpx"
+	"github.com/JonaWu05/DocNest/internal/store"
 )
 
 // maxUploadSize 為單一上傳檔案大小上限（20 MB）
