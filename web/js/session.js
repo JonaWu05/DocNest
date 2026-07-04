@@ -17,7 +17,8 @@ const loginUser = document.getElementById("login-username");
 const loginPass = document.getElementById("login-password");
 const discordBtn = document.getElementById("discord-login-btn");
 const logoutBtn = document.getElementById("logout-btn");
-const reloadConfigBtn = document.getElementById("reload-config-btn");
+const adminLink = document.getElementById("admin-link");
+const changePwBtn = document.getElementById("change-pw-btn");
 
 // showLogin / showApp 切換登入頁與主介面的顯示。
 function showLogin() {
@@ -48,7 +49,8 @@ async function enterAppWithMe() {
     state.hasAccess = me.has_access !== false;
     state.canWriteRoot = me.can_write_root !== false;
     state.isAdmin = me.is_admin === true;
-    reloadConfigBtn.classList.toggle("hidden", !state.isAdmin); // 僅管理員可見「重載設定」
+    adminLink.classList.toggle("hidden", !state.isAdmin);              // 僅管理員可見「管理」入口
+    changePwBtn.classList.toggle("hidden", me.login_type !== "local"); // 僅本地帳號可改密碼
     showApp();
     onEnterApp(me.default_doc); // 把首頁文件設定一併交給主介面初始化
   } catch (e) {
@@ -57,9 +59,11 @@ async function enterAppWithMe() {
   }
 }
 
-// logout 主動登出：關閉 WebSocket、清除 token、回到登入頁。
-function logout() {
+// logout 主動登出：關閉 WebSocket、清除認證 cookie 與 token、回到登入頁。
+async function logout() {
   disconnectWS(); // 主動關閉 WebSocket，不再自動重連
+  // 清除頁面守門用的 HttpOnly cookie（前端 JS 無法自行刪除，需伺服器清）；失敗不阻斷登出。
+  try { await authFetch(API_BASE + "/api/logout", { method: "POST" }); } catch (e) { /* 忽略 */ }
   clearToken();
   showLogin();
 }
@@ -83,19 +87,38 @@ async function doLocalLogin(e) {
   }
 }
 
-// doReloadConfig 管理員手動重新載入帳號 / 權限設定（免重啟）。
-async function doReloadConfig() {
-  reloadConfigBtn.disabled = true;
+// ===== 修改密碼小彈窗（本地帳號自助）=====
+const pwModal = document.getElementById("pw-modal");
+const pwOld = document.getElementById("pw-old");
+const pwNew = document.getElementById("pw-new");
+const pwError = document.getElementById("pw-error");
+const pwSubmit = document.getElementById("pw-submit");
+
+function openPwModal() {
+  pwOld.value = ""; pwNew.value = ""; pwError.textContent = "";
+  pwModal.classList.remove("hidden");
+  pwOld.focus();
+}
+function closePwModal() { pwModal.classList.add("hidden"); }
+
+// doChangePassword 呼叫 /api/me/password 修改自己的密碼（需驗舊密碼）。
+async function doChangePassword() {
+  pwError.textContent = "";
+  if (!pwNew.value) { pwError.textContent = "請輸入新密碼"; return; }
+  pwSubmit.disabled = true;
   try {
-    const res = await authFetch(API_BASE + "/api/admin/reload", { method: "POST" });
+    const res = await authFetch(API_BASE + "/api/me/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ old_password: pwOld.value, new_password: pwNew.value }),
+    });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "重新載入失敗");
-    reloadConfigBtn.textContent = "已重載 ✓";
-    setTimeout(() => { reloadConfigBtn.textContent = "重載設定"; }, 2000);
+    if (!res.ok) throw new Error(data.error || "修改失敗");
+    closePwModal();
   } catch (err) {
-    alert("重新載入設定失敗：" + err.message);
+    pwError.textContent = err.message;
   } finally {
-    reloadConfigBtn.disabled = false;
+    pwSubmit.disabled = false;
   }
 }
 
@@ -104,7 +127,12 @@ export function initSession() {
   loginForm.addEventListener("submit", doLocalLogin);
   discordBtn.addEventListener("click", () => { window.location.href = "/auth/discord"; });
   logoutBtn.addEventListener("click", logout);
-  reloadConfigBtn.addEventListener("click", doReloadConfig);
+  // 「管理」為 <a href="/admin"> 原生導覽，無需綁定；修改密碼彈窗：
+  changePwBtn.addEventListener("click", openPwModal);
+  document.getElementById("pw-close").addEventListener("click", closePwModal);
+  pwSubmit.addEventListener("click", doChangePassword);
+  pwModal.addEventListener("click", (e) => { if (e.target === pwModal) closePwModal(); });
+  pwNew.addEventListener("keydown", (e) => { if (e.key === "Enter") doChangePassword(); });
   // 任何受保護請求遇 401：自動登出回登入頁
   window.addEventListener("auth:unauthorized", logout);
 

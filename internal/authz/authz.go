@@ -4,13 +4,17 @@ package authz
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
+
+	"markdownEditor/internal/store"
 )
 
 // 權限等級（由低到高）：none < read < write；write 隱含 read，
@@ -21,9 +25,9 @@ const (
 	AccessWrite
 )
 
-// adminGroup 為「管理員」的群組名稱：此群組的具名成員可執行管理操作（如熱重載設定）。
+// AdminGroup 為「管理員」的群組名稱：此群組的具名成員可執行管理操作（如熱重載設定）。
 // 沿用既有設定檔中的群組，不另立新概念；"*" 萬用成員不視為管理員（須為具名身分）。
-const adminGroup = "admins"
+const AdminGroup = "admins"
 
 // rule 為設定檔中的單一條規則。
 type rule struct {
@@ -56,7 +60,8 @@ type snapshot struct {
 	defaultLevel   int                   // 預設權限等級
 	rulesBySubject map[string][]normRule // subject -> 規則
 	rulesEveryone  []normRule            // 萬用成員 "*" 的規則（套用到所有已登入者）
-	admins         map[string]bool       // adminGroup 的具名成員（身分鍵 -> true）
+	admins         map[string]bool       // AdminGroup 的具名成員（身分鍵 -> true）
+	groupMembers   map[string][]string   // 群組名 -> 成員身分鍵（含 "*"）；供管理面板列出與指派
 }
 
 // Authz 保存一份可熱重載的權限設定，提供查詢方法。取代原本的 package 級全域。
@@ -64,6 +69,7 @@ type snapshot struct {
 type Authz struct {
 	mu   sync.RWMutex
 	snap *snapshot
+	path string // 設定檔來源路徑（供群組成員編輯時 read-modify-write）
 }
 
 // Load 從設定檔建立 Authz。
@@ -74,7 +80,7 @@ func Load(path string) (*Authz, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Authz{snap: s}, nil
+	return &Authz{snap: s, path: path}, nil
 }
 
 // Reload 重新讀取設定檔並就地替換快照；供管理員手動觸發、免重啟。
@@ -86,21 +92,32 @@ func (a *Authz) Reload(path string) error {
 	}
 	a.mu.Lock()
 	a.snap = s
+	a.path = path
 	a.mu.Unlock()
 	return nil
 }
 
-// parse 讀取並解析設定檔為一份不可變快照。Load 與 Reload 共用。
+// parse 讀取設定檔並解析為一份不可變快照；檔案不存在時回傳停用（全開相容）快照。
 func parse(path string) (*snapshot, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			slog.Warn("找不到權限設定檔，未啟用權限分組（所有登入者可存取全部檔案，僅適用於開發或單一信任群組）", "path", path)
-			return &snapshot{enabled: false}, nil
+			return &snapshot{enabled: false, groupMembers: map[string][]string{}}, nil
 		}
 		return nil, err
 	}
+	s, err := parseConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("已載入權限設定", "path", path, "groups", len(s.groupMembers), "default", accessName(s.defaultLevel), "admins", len(s.admins))
+	return s, nil
+}
 
+// parseConfig 將設定檔內容（JSON bytes）解析為一份不可變快照。
+// 與 parse 分離，讓群組成員編輯後可直接以寫回的 bytes 重建快照，不必再讀一次磁碟。
+func parseConfig(data []byte) (*snapshot, error) {
 	var cfg fileConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
@@ -111,27 +128,30 @@ func parse(path string) (*snapshot, error) {
 		defaultLevel:   accessLevel(cfg.Default),
 		rulesBySubject: map[string][]normRule{},
 		admins:         map[string]bool{},
+		groupMembers:   map[string][]string{},
 	}
 	for name, g := range cfg.Groups {
 		rules := make([]normRule, 0, len(g.Rules))
 		for _, r := range g.Rules {
 			rules = append(rules, normRule{path: normPath(r.Path), access: accessLevel(r.Access)})
 		}
+		mem := make([]string, 0, len(g.Members))
 		for _, m := range g.Members {
 			if m = strings.TrimSpace(m); m == "" {
 				continue
 			}
+			mem = append(mem, m)
 			if m == "*" {
 				s.rulesEveryone = append(s.rulesEveryone, rules...)
 				continue // 萬用成員不計入具名的管理員名單
 			}
 			s.rulesBySubject[m] = append(s.rulesBySubject[m], rules...)
-			if name == adminGroup {
+			if name == AdminGroup {
 				s.admins[m] = true
 			}
 		}
+		s.groupMembers[name] = mem
 	}
-	slog.Info("已載入權限設定", "path", path, "groups", len(cfg.Groups), "default", strings.ToLower(strings.TrimSpace(cfg.Default)), "admins", len(s.admins))
 	return s, nil
 }
 
@@ -188,14 +208,110 @@ func (a *Authz) HasAnyRead(subject string) bool {
 	return false
 }
 
-// IsAdmin 判斷 subject 是否為管理員（adminGroup 的具名成員）。
-// 未啟用權限分組（相容全開模式）時，視所有登入者為管理員，與「全開＝皆可寫根」一致。
+// IsAdmin 判斷 subject 是否為管理員（AdminGroup 的具名成員）。
+// 刻意「嚴格」：未啟用權限分組（無 permissions.json）時沒有任何管理員——管理員身分須明確授予。
 func (a *Authz) IsAdmin(subject string) bool {
+	return a.current().admins[subject]
+}
+
+// Enabled 回報是否已啟用權限分組（成功載入設定檔）。
+func (a *Authz) Enabled() bool {
+	return a.current().enabled
+}
+
+// AdminSubjects 回傳目前所有管理員的身分鍵（AdminGroup 的具名成員），供自我保護（防鎖死）判斷。
+func (a *Authz) AdminSubjects() []string {
 	s := a.current()
-	if !s.enabled {
-		return true
+	out := make([]string, 0, len(s.admins))
+	for subj := range s.admins {
+		out = append(out, subj)
 	}
-	return s.admins[subject]
+	return out
+}
+
+// ListGroups 回傳所有群組名稱（字母排序），供管理面板列出可指派的群組。
+func (a *Authz) ListGroups() []string {
+	s := a.current()
+	names := make([]string, 0, len(s.groupMembers))
+	for g := range s.groupMembers {
+		names = append(names, g)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// GroupsOf 回傳 subject 所屬的群組名稱（字母排序）。
+// 回傳非 nil 空切片（而非 nil），確保 JSON 序列化為 [] 而非 null，前端可安全 .includes()。
+func (a *Authz) GroupsOf(subject string) []string {
+	s := a.current()
+	out := []string{}
+	for g, members := range s.groupMembers {
+		for _, m := range members {
+			if m == subject {
+				out = append(out, g)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SetGroupMember 把 subject 加入（add=true）或移出（add=false）既有群組 group，
+// 以 read-modify-write 更新 permissions.json（只動 members，不碰 rules），原子寫回後就地重載快照。
+// 群組不存在、或未啟用權限分組時回傳錯誤。整個過程持寫鎖，序列化並發的寫入。
+func (a *Authz) SetGroupMember(group, subject string, add bool) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if !a.snap.enabled {
+		return fmt.Errorf("未啟用權限分組（找不到 permissions.json）")
+	}
+	data, err := os.ReadFile(a.path)
+	if err != nil {
+		return err
+	}
+	var cfg fileConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return err
+	}
+	g, ok := cfg.Groups[group]
+	if !ok {
+		return fmt.Errorf("群組不存在：%s", group)
+	}
+
+	// 重建成員清單：保留其他成員，依 add 決定納入/剔除 subject（冪等）。
+	exists := false
+	filtered := make([]string, 0, len(g.Members))
+	for _, m := range g.Members {
+		if strings.TrimSpace(m) == subject {
+			exists = true
+			if !add {
+				continue // 移除：略過
+			}
+		}
+		filtered = append(filtered, m)
+	}
+	if add && !exists {
+		filtered = append(filtered, subject)
+	}
+	g.Members = filtered
+	cfg.Groups[group] = g
+
+	out, err := json.MarshalIndent(&cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	// 注意：寫回會依 fileConfig 結構重新序列化，設定檔內的註解鍵（如 "//"）不會保留。
+	if err := store.AtomicWrite(a.path, out, 0o644, false); err != nil {
+		return err
+	}
+	s, err := parseConfig(out)
+	if err != nil {
+		return err
+	}
+	a.snap = s
+	return nil
 }
 
 // RequireAccess 在 handler 開頭檢查權限，不足時回 403 並中止請求；回傳是否放行。
@@ -230,6 +346,18 @@ func accessLevel(s string) int {
 		return AccessRead
 	default:
 		return AccessNone
+	}
+}
+
+// accessName 為 accessLevel 的反向：把等級整數轉回設定字串（供日誌顯示）。
+func accessName(level int) string {
+	switch level {
+	case AccessWrite:
+		return "write"
+	case AccessRead:
+		return "read"
+	default:
+		return "none"
 	}
 }
 

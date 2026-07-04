@@ -1755,3 +1755,183 @@ body.dark #collab-external-bar {
   margin-top: 6px;
   font-size: 13px;
 }
+
+/* ===== 使用者管理頁（/admin）===== */
+.admin-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-header h1 {
+  font-size: 20px;
+  margin: 0;
+  color: var(--text);
+}
+
+.admin-header-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.admin-notice {
+  margin-bottom: 18px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.admin-section {
+  margin-bottom: 30px;
+}
+
+.admin-section h2 {
+  font-size: 15px;
+  margin: 0 0 12px;
+  color: var(--text);
+}
+
+.admin-add-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.admin-add-form input {
+  flex: 1 1 160px;
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.admin-add-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.admin-add-form .login-btn {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 8px 18px;
+  margin: 0;
+}
+
+.admin-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.admin-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.admin-row:last-child {
+  border-bottom: none;
+}
+
+.admin-row-name {
+  flex: 0 0 auto;
+  min-width: 120px;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.admin-row-groups {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.admin-row-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.group-chip {
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.group-chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.group-chip:hover {
+  border-color: var(--accent);
+}
+
+.tool-btn.danger {
+  color: #e5484d;
+}
+
+.tool-btn.danger:hover {
+  background: rgba(229, 72, 77, 0.12);
+}
+
+.admin-empty {
+  padding: 16px 14px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* 修改密碼小彈窗 */
+.pw-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+}
+
+.pw-body input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.pw-body input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pw-body .login-btn {
+  margin: 4px 0 0;
+}

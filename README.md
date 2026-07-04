@@ -72,8 +72,9 @@ go run .
 ## 帳號與權限（accounts.json / permissions.json）
 
 - **`accounts.json`**：本地帳號（`local`：`帳號` → bcrypt hash）與 Discord 登入白名單（`discord_allowed`：User ID 陣列）。範本為 `accounts.example.json`；產生密碼 hash：`go run ./cmd/hashpw '你的密碼'`。
-- **`permissions.json`**：群組 + 路徑前綴的存取控制。範本為 `permissions.example.json`；名為 `admins` 群組的成員即管理員。
-- **免重啟熱重載**：改完上述兩檔後，管理員登入後點右上角「重載設定」（或 `POST /api/admin/reload`）即可即時生效，不必重啟服務。
+- **`permissions.json`**：群組 + 路徑前綴的存取控制。範本為 `permissions.example.json`；名為 `admins` 群組的成員即**管理員**（可進入管理頁；無此檔則無任何管理員）。
+- **管理頁 `/admin`**：管理員登入後點右上角「管理」進入，可**免手改檔、免重啟**地新增／刪除本地帳號、重設密碼、增減 Discord 白名單、把成員指派到既有群組；變動即時生效。頁面以認證 cookie 做伺服器端守門，非管理員無法進入。仍可用頁內「重載設定」重新載入手動改過的檔案。
+- **自助改密碼**：本地帳號登入後可點右上角「改密碼」修改自己的密碼（需驗舊密碼）。
 - 兩檔均含部署資料（密碼 hash、成員身分），已列入 `.gitignore`，請勿提交。
 
 

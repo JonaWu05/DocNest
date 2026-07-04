@@ -22,10 +22,11 @@ type accountsSnapshot struct {
 }
 
 // Accounts 保存一份可熱重載的帳號設定（本地帳號 + Discord 白名單）。
-// 以 RWMutex 保護 snap 指標：查詢取當下快照，Reload 只在替換指標的瞬間持寫鎖。
+// 以 RWMutex 保護 snap 指標：查詢取當下快照，Reload / 變動只在替換指標的瞬間持寫鎖。
 type Accounts struct {
 	mu   sync.RWMutex
 	snap *accountsSnapshot
+	path string // 設定檔來源路徑（供變動時 read-modify-write）
 }
 
 // LoadAccounts 從設定檔建立 Accounts。
@@ -36,7 +37,7 @@ func LoadAccounts(path string) (*Accounts, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Accounts{snap: s}, nil
+	return &Accounts{snap: s, path: path}, nil
 }
 
 // Reload 重新讀取設定檔並就地替換快照；供管理員手動觸發、免重啟。
@@ -48,11 +49,12 @@ func (a *Accounts) Reload(path string) error {
 	}
 	a.mu.Lock()
 	a.snap = s
+	a.path = path
 	a.mu.Unlock()
 	return nil
 }
 
-// parseAccounts 讀取並解析 accounts.json 為一份不可變快照。LoadAccounts 與 Reload 共用。
+// parseAccounts 讀取設定檔並解析為一份不可變快照；檔案不存在時回傳空帳號快照並警告。
 func parseAccounts(path string) (*accountsSnapshot, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -62,7 +64,17 @@ func parseAccounts(path string) (*accountsSnapshot, error) {
 		}
 		return nil, err
 	}
+	s, err := parseAccountsData(data)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("已載入帳號設定", "path", path, "local", len(s.users), "discord_allowed", len(s.discordAllowed))
+	return s, nil
+}
 
+// parseAccountsData 將 accounts.json 內容（JSON bytes）解析為一份不可變快照。
+// 與 parseAccounts 分離，讓變動寫回後可直接以新 bytes 重建快照，不必再讀一次磁碟。
+func parseAccountsData(data []byte) (*accountsSnapshot, error) {
 	var f accountsFile
 	if err := json.Unmarshal(data, &f); err != nil {
 		return nil, err
@@ -90,7 +102,6 @@ func parseAccounts(path string) (*accountsSnapshot, error) {
 			s.discordAllowed[id] = true
 		}
 	}
-	slog.Info("已載入帳號設定", "path", path, "local", len(s.users), "discord_allowed", len(s.discordAllowed))
 	return s, nil
 }
 

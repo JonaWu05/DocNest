@@ -28,6 +28,11 @@ const (
 	loginWindow      = 15 * time.Minute
 )
 
+// authCookieName 為頁面層級守門用的認證 cookie 名稱。
+// 內容即 JWT，僅用於伺服器端判斷「載入 GET 頁面（如 /admin）」時的身分；
+// API 仍走 Authorization: Bearer。cookie 為 HttpOnly + SameSite=Lax，不授權任何寫入 → 免 CSRF。
+const authCookieName = "auth_token"
+
 type loginAttempt struct {
 	failures int
 	resetAt  time.Time
@@ -133,6 +138,46 @@ func (a *Auth) Middleware() gin.HandlerFunc {
 	}
 }
 
+// setAuthCookie 種下頁面守門用的認證 cookie（內容為 JWT）。
+// SameSite=Lax：同站導覽與直接開網址/書籤的 top-level GET 會帶上（守門可用），跨站非 GET 不帶（免 CSRF）。
+func (a *Auth) setAuthCookie(c *gin.Context, token string) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(authCookieName, token, int(a.cfg.JWTExpire.Seconds()), "/", "", a.cfg.CookieSecure, true)
+}
+
+// clearAuthCookie 清除認證 cookie（登出時呼叫；HttpOnly cookie 前端 JS 無法自行刪除）。
+func (a *Auth) clearAuthCookie(c *gin.Context) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(authCookieName, "", -1, "/", "", a.cfg.CookieSecure, true)
+}
+
+// LogoutHandler 處理 POST /api/logout：清除認證 cookie。前端另需自行清掉 localStorage 的 token。
+func (a *Auth) LogoutHandler(c *gin.Context) {
+	a.clearAuthCookie(c)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+// RequireAdminPage 為「頁面層級」守門中介層（用於 GET /admin 等 HTML 頁）：
+// 讀認證 cookie → 驗 JWT → 檢查是否為管理員；任一不符即導回首頁並中止，
+// 使非管理員連頁面骨架都拿不到。真正的資料防線仍在各 API endpoint。
+func (a *Auth) RequireAdminPage() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tok, err := c.Cookie(authCookieName)
+		if err != nil {
+			c.Redirect(http.StatusFound, "/")
+			c.Abort()
+			return
+		}
+		claims, err := a.ParseJWT(tok)
+		if err != nil || !a.az.IsAdmin(SubjectFromClaims(claims)) {
+			c.Redirect(http.StatusFound, "/")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 // ===== 登入限流 =====
 
 // loginBlocked 判斷某 IP 是否因連續登入失敗達上限、且仍在封鎖視窗內。
@@ -213,6 +258,7 @@ func (a *Auth) LoginHandler(c *gin.Context) {
 	}
 
 	a.resetLoginFailures(ip)
+	a.setAuthCookie(c, token) // 供 /admin 等頁面層級守門
 	c.JSON(http.StatusOK, gin.H{
 		"token":      token,
 		"username":   req.Username,
@@ -347,5 +393,6 @@ func (a *Auth) DiscordCallbackHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "簽發 token 失敗"})
 		return
 	}
+	a.setAuthCookie(c, jwtStr) // 供 /admin 等頁面層級守門
 	c.Redirect(http.StatusFound, "/index.html#token="+url.QueryEscape(jwtStr))
 }

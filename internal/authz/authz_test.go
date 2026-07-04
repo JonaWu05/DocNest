@@ -113,10 +113,79 @@ func TestIsAdmin(t *testing.T) {
 		t.Error("\"*\" 萬用成員不應被視為管理員")
 	}
 
-	// 停用模式（無設定檔）：所有登入者視為管理員
+	// 停用模式（無設定檔）：嚴格化後沒有任何管理員
 	dis, _ := Load(filepath.Join(t.TempDir(), "nonexistent.json"))
-	if !dis.IsAdmin("anyone") {
-		t.Error("停用模式應視所有人為管理員")
+	if dis.IsAdmin("anyone") {
+		t.Error("停用模式不應有任何管理員（嚴格化）")
+	}
+}
+
+func TestListAndGroupsOf(t *testing.T) {
+	a, _ := Load(writePerms(t, `{"default":"none","groups":{
+	  "everyone":{"members":["*"],"rules":[{"path":"welcome.md","access":"read"}]},
+	  "admins":{"members":["local:boss"],"rules":[{"path":"","access":"write"}]},
+	  "editors":{"members":["local:alice","local:boss"],"rules":[{"path":"teamA","access":"write"}]}
+	}}`))
+	if got := a.ListGroups(); len(got) != 3 || got[0] != "admins" || got[1] != "editors" || got[2] != "everyone" {
+		t.Errorf("ListGroups 排序不正確：%v", got)
+	}
+	if got := a.GroupsOf("local:boss"); len(got) != 2 || got[0] != "admins" || got[1] != "editors" {
+		t.Errorf("GroupsOf(boss) 應為 [admins editors]，得到 %v", got)
+	}
+	// 無群組者須回「非 nil 的空切片」，確保 JSON 序列化為 [] 而非 null（前端可安全 .includes）
+	if got := a.GroupsOf("local:nobody"); got == nil || len(got) != 0 {
+		t.Errorf("GroupsOf(nobody) 應為非 nil 空切片，得到 %v", got)
+	}
+}
+
+func TestSetGroupMember(t *testing.T) {
+	p := writePerms(t, `{"default":"none","groups":{
+	  "admins":{"members":["local:boss"],"rules":[{"path":"","access":"write"}]},
+	  "editors":{"members":["local:alice"],"rules":[{"path":"teamA","access":"write"}]}
+	}}`)
+	a, _ := Load(p)
+
+	// 加入既有群組：生效且持久化
+	if err := a.SetGroupMember("editors", "local:bob", true); err != nil {
+		t.Fatal(err)
+	}
+	if !a.Can("local:bob", "teamA/x.md", AccessWrite) {
+		t.Error("bob 加入 editors 後應可寫 teamA")
+	}
+	// 冪等：重複加入不重複
+	if err := a.SetGroupMember("editors", "local:bob", true); err != nil {
+		t.Fatal(err)
+	}
+	// 重新載入確認已寫回磁碟
+	b, _ := Load(p)
+	if got := b.GroupsOf("local:bob"); len(got) != 1 || got[0] != "editors" {
+		t.Errorf("寫回後 bob 應只屬 editors，得到 %v", got)
+	}
+
+	// 加入 admins 使其成為管理員；再移出
+	if err := a.SetGroupMember("admins", "local:bob", true); err != nil {
+		t.Fatal(err)
+	}
+	if !a.IsAdmin("local:bob") {
+		t.Error("bob 加入 admins 後應為管理員")
+	}
+	if err := a.SetGroupMember("admins", "local:bob", false); err != nil {
+		t.Fatal(err)
+	}
+	if a.IsAdmin("local:bob") {
+		t.Error("bob 移出 admins 後不應為管理員")
+	}
+
+	// 群組不存在 → 錯誤
+	if err := a.SetGroupMember("nope", "local:bob", true); err == nil {
+		t.Error("不存在的群組應回傳錯誤")
+	}
+}
+
+func TestSetGroupMemberDisabled(t *testing.T) {
+	a, _ := Load(filepath.Join(t.TempDir(), "nonexistent.json")) // 停用模式
+	if err := a.SetGroupMember("admins", "local:x", true); err == nil {
+		t.Error("未啟用權限分組時 SetGroupMember 應回傳錯誤")
 	}
 }
 

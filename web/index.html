@@ -104,8 +104,10 @@
         <span id="user-badge" class="user-badge" title="目前登入者">
           <span id="user-name"></span><span id="user-type" class="user-type-tag"></span>
         </span>
-        <!-- 僅管理員可見：重新載入帳號 / 權限設定（免重啟） -->
-        <button class="tool-btn hidden" id="reload-config-btn" title="重新載入帳號與權限設定">重載設定</button>
+        <!-- 僅本地帳號可見：修改自己的密碼 -->
+        <button class="tool-btn hidden" id="change-pw-btn" title="修改密碼">改密碼</button>
+        <!-- 僅管理員可見：進入使用者管理頁 -->
+        <a class="tool-btn hidden" id="admin-link" href="/admin" title="使用者管理">管理</a>
         <button class="tool-btn" id="logout-btn" title="登出">登出</button>
         <button id="save-btn" title="儲存 (Ctrl+S)" disabled>儲存</button>
       </div>
@@ -186,6 +188,22 @@
       </div>
       <div class="modal-subtoolbar"><span id="trash-hint"></span></div>
       <div class="doc-list" id="trash-list"></div>
+    </div>
+  </div>
+
+  <!-- 修改密碼：本地帳號自助改自己的密碼 -->
+  <div id="pw-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span>修改密碼</span>
+        <button class="icon-btn" id="pw-close" title="關閉"><i class="fa fa-times"></i></button>
+      </div>
+      <div class="pw-body">
+        <input type="password" id="pw-old" placeholder="舊密碼" autocomplete="current-password">
+        <input type="password" id="pw-new" placeholder="新密碼" autocomplete="new-password">
+        <div id="pw-error" class="login-error"></div>
+        <button class="login-btn" id="pw-submit" type="button">確認修改</button>
+      </div>
     </div>
   </div>
 

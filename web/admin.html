@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>使用者管理</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚙️</text></svg>">
+  <link rel="preload" as="style" href="/static/vendor/fontawesome/css/font-awesome.min.css"
+        onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="/static/vendor/fontawesome/css/font-awesome.min.css"></noscript>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+
+<body>
+  <!-- 沿用主編輯器的深/淺色偏好（此頁不載入 main.js，於 body 起始提早套用避免閃爍）-->
+  <script>if (localStorage.getItem("theme") === "dark") document.body.classList.add("dark");</script>
+  <div class="admin-page">
+    <header class="admin-header">
+      <h1><i class="fa fa-users"></i> 使用者管理</h1>
+      <div class="admin-header-actions">
+        <button class="tool-btn" id="reload-btn" title="重新載入 accounts.json 與 permissions.json">重載設定</button>
+        <a class="tool-btn" href="/" title="返回編輯器">← 返回</a>
+      </div>
+    </header>
+
+    <div id="admin-notice" class="admin-notice hidden"></div>
+
+    <!-- 本地帳號 -->
+    <section class="admin-section">
+      <h2>本地帳號</h2>
+      <form class="admin-add-form" id="add-user-form" autocomplete="off">
+        <input type="text" id="new-username" placeholder="帳號" required>
+        <input type="password" id="new-password" placeholder="初始密碼" required>
+        <button class="login-btn" type="submit">新增帳號</button>
+      </form>
+      <div class="admin-table" id="local-list"></div>
+    </section>
+
+    <!-- Discord 白名單 -->
+    <section class="admin-section">
+      <h2>Discord 登入白名單</h2>
+      <form class="admin-add-form" id="add-discord-form" autocomplete="off">
+        <input type="text" id="new-discord-id" placeholder="Discord User ID" required>
+        <button class="login-btn" type="submit">新增</button>
+      </form>
+      <div class="admin-table" id="discord-list"></div>
+    </section>
+  </div>
+
+  <script type="module" src="/static/js/admin.js"></script>
+</body>
+
+</html>

@@ -201,8 +201,12 @@ func main() {
 	r.Static("/static", "./web")
 
 	r.POST("/api/login", au.LoginHandler)
+	r.POST("/api/logout", au.LogoutHandler) // 清除頁面守門用的認證 cookie（公開：過期 session 也能清）
 	r.GET("/auth/discord", au.DiscordAuthHandler)
 	r.GET("/auth/discord/callback", au.DiscordCallbackHandler)
+
+	// 管理頁：以認證 cookie 做伺服器端守門，非管理員導回首頁（連骨架都拿不到）。
+	r.GET("/admin", au.RequireAdminPage(), func(c *gin.Context) { c.File("./web/admin.html") })
 
 	// WebSocket：自行用 query 參數 token 驗證後升級（瀏覽器無法為 WS 帶 Authorization 標頭）
 	r.GET("/ws", h.ServeWs)
@@ -213,8 +217,16 @@ func main() {
 	api.Use(au.Middleware())
 	{
 		api.GET("/me", au.MeHandler)
-		// 管理員手動重新載入帳號 / 權限設定（免重啟）；handler 內再驗證管理員身分
-		api.POST("/admin/reload", au.ReloadConfigHandler)
+		api.POST("/me/password", au.ChangeOwnPasswordHandler) // 使用者自助改密碼（僅本地帳號）
+		// ===== 管理員專用（handler 內再驗證管理員身分）=====
+		api.POST("/admin/reload", au.ReloadConfigHandler)           // 手動重新載入設定（免重啟）
+		api.GET("/admin/overview", au.OverviewHandler)              // 帳號 / 群組總覽
+		api.POST("/admin/user/create", au.CreateUserHandler)        // 新增本地帳號
+		api.POST("/admin/user/password", au.SetUserPasswordHandler) // 重設帳號密碼
+		api.POST("/admin/user/delete", au.DeleteUserHandler)        // 刪除本地帳號
+		api.POST("/admin/discord/add", au.AddDiscordHandler)        // Discord 白名單新增
+		api.POST("/admin/discord/remove", au.RemoveDiscordHandler)  // Discord 白名單移除
+		api.POST("/admin/group/member", au.SetGroupMemberHandler)   // 群組成員指派
 		api.GET("/online-count", h.OnlineCountHandler)
 		api.GET("/files", fileH.ListFiles)
 		api.GET("/file", fileH.ReadFile)
