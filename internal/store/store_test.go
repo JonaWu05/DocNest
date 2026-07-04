@@ -105,6 +105,9 @@ func TestBuildTree(t *testing.T) {
 	if !notes.Children[1].IsIndex {
 		t.Error("index.md 應標記 IsIndex")
 	}
+	if notes.Children[1].Title != "" {
+		t.Errorf("index.md 自身不應帶顯示標題，得到 %q", notes.Children[1].Title)
+	}
 	if tree.Children[1].Title != "intro text without h" {
 		t.Errorf("welcome.md fallback Title=%q", tree.Children[1].Title)
 	}
@@ -248,8 +251,12 @@ func TestCachedTreeInvalidate(t *testing.T) {
 func TestScanAssetsAndCache(t *testing.T) {
 	root := t.TempDir()
 	mustMkdir(t, filepath.Join(root, "assets", "sub"))
+	mustMkdir(t, filepath.Join(root, "assets", "中文夾")) // 不合法真實資料夾名整個略過
 	mustWrite(t, filepath.Join(root, "assets", "a.png"))
 	mustWrite(t, filepath.Join(root, "assets", "sub", "b.pdf"))
+	mustWrite(t, filepath.Join(root, "assets", "報告.png"))       // 不合法真實檔名略過
+	mustWrite(t, filepath.Join(root, "assets", ".hidden.png"))  // 隱藏檔略過
+	mustWrite(t, filepath.Join(root, "assets", "中文夾", "c.png")) // 不合法資料夾底下不列入
 	s := New(root)
 
 	entries, err := s.ScanAssets()

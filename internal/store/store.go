@@ -25,7 +25,7 @@ type FileNode struct {
 	Path     string      `json:"path"`               // 相對於 DOC_ROOT 的路徑（使用 / 分隔）
 	IsDir    bool        `json:"isDir"`              // 是否為資料夾
 	Writable bool        `json:"writable"`           // 目前使用者是否可寫（由呼叫端依權限標記）
-	Title    string      `json:"title,omitempty"`    // UI 顯示標題：檔案取內容標題，資料夾取 index.md 標題
+	Title    string      `json:"title,omitempty"`    // UI 顯示標題：檔案取內容標題，資料夾取 index.md 標題（index.md 自身不帶標題）
 	IsIndex  bool        `json:"isIndex,omitempty"`  // 是否為資料夾首頁 index.md
 	Children []*FileNode `json:"children,omitempty"` // 子節點（僅資料夾有）
 }
@@ -202,8 +202,10 @@ func (s *Store) InvalidateAssets() {
 	s.assetMu.Unlock()
 }
 
-// scanAssets 走訪 Root/assets，回傳所有檔案與（非隱藏）資料夾。
-// assets 目錄不存在時回傳空清單（非錯誤）。隱藏資料夾（. 開頭）不進入。
+// scanAssets 走訪 Root/assets，回傳所有檔案與資料夾。
+// assets 目錄不存在時回傳空清單（非錯誤）。
+// 略過規則與 buildTree 同步：隱藏項目（. 開頭）與不合法真實名稱（validateName）
+// 均不列入，資料夾不合法時整個子樹跳過。
 func scanAssets(root string) ([]AssetEntry, error) {
 	out := []AssetEntry{}
 	assetsRoot := filepath.Join(root, "assets")
@@ -225,10 +227,13 @@ func scanAssets(root string) ([]AssetEntry, error) {
 		}
 		slash := filepath.ToSlash(rel)
 		if d.IsDir() {
-			if strings.HasPrefix(d.Name(), ".") {
+			if strings.HasPrefix(d.Name(), ".") || validateName(d.Name()) != nil {
 				return filepath.SkipDir
 			}
 			out = append(out, AssetEntry{Path: slash, Name: d.Name(), IsDir: true})
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") || validateName(d.Name()) != nil {
 			return nil
 		}
 		var size int64
@@ -425,21 +430,28 @@ func buildTree(dirPath, relPath string) (*FileNode, error) {
 			}
 			node.Children = append(node.Children, child)
 		} else if IsAllowedFile(name) {
+			// index.md 為資料夾首頁：其標題歸屬資料夾（見下方迴圈），自身不帶顯示標題
+			isIndex := strings.EqualFold(name, "index.md")
+			title := ""
+			if !isIndex {
+				title = extractDisplayTitle(childAbs)
+			}
 			node.Children = append(node.Children, &FileNode{
 				Name:    name,
 				Path:    childRel,
 				IsDir:   false,
-				Title:   extractDisplayTitle(childAbs),
-				IsIndex: strings.EqualFold(name, "index.md"),
+				Title:   title,
+				IsIndex: isIndex,
 			})
 		}
 	}
 
+	// 資料夾標題取自其 index.md 的內容標題
 	for _, child := range node.Children {
-		if child.IsDir || !strings.EqualFold(child.Name, "index.md") {
+		if child.IsDir || !child.IsIndex {
 			continue
 		}
-		node.Title = child.Title
+		node.Title = extractDisplayTitle(filepath.Join(dirPath, child.Name))
 		break
 	}
 
