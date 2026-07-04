@@ -2,7 +2,6 @@
 package config
 
 import (
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -27,15 +26,14 @@ type Config struct {
 	Host            string   // 服務綁定位址（空＝所有介面 0.0.0.0；可設 127.0.0.1 僅本機、或指定本機 IP）
 	Port            string   // 服務埠號
 	PermissionsFile string   // 權限設定檔路徑
+	AccountsFile    string   // 帳號設定檔路徑（本地帳號 + Discord 白名單，可熱重載）
 	TrustedProxies  []string // 信任的反向代理（IP/CIDR）
 	AllowedOrigins  []string // CORS / WebSocket 允許來源；空＝開發模式全放行
 
-	Users          map[string]string // username -> bcrypt hash
-	JWTSecret      []byte            // 簽發 / 驗證 JWT 用的密鑰
-	JWTExpire      time.Duration     // JWT 有效期間
-	Discord        *oauth2.Config    // Discord OAuth 設定（nil 代表停用）
-	DiscordAllowed map[string]bool   // 允許登入的 Discord User ID 白名單
-	DefaultDoc     string            // 登入後自動開啟的首頁文件（相對 DOC_ROOT）
+	JWTSecret  []byte         // 簽發 / 驗證 JWT 用的密鑰
+	JWTExpire  time.Duration  // JWT 有效期間
+	Discord    *oauth2.Config // Discord OAuth 設定（nil 代表停用）
+	DefaultDoc string         // 登入後自動開啟的首頁文件（相對 DOC_ROOT）
 
 	// FsyncOnSave：存檔時是否 fsync 強制刷盤。預設關（多數檔案型應用的做法）。
 	// 關閉不影響原子性（仍靠 temp+rename，讀者不會讀到半檔），僅放棄「斷電當下那一存」的耐久保證。
@@ -70,9 +68,6 @@ func Load() *Config {
 	}
 	c.DocRoot = absRoot
 
-	// Local accounts
-	c.Users = parseUsers(os.Getenv("USERS"))
-
 	// JWT
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
@@ -102,13 +97,6 @@ func Load() *Config {
 			Endpoint:     discordEndpoint,
 		}
 	}
-	c.DiscordAllowed = map[string]bool{}
-	for _, id := range strings.Split(os.Getenv("DISCORD_ALLOWED_IDS"), ",") {
-		if id = strings.TrimSpace(id); id != "" {
-			c.DiscordAllowed[id] = true
-		}
-	}
-
 	// 標題 / 背景 / 埠號 / 權限檔
 	c.AppTitle = strings.TrimSpace(os.Getenv("APP_TITLE"))
 	if c.AppTitle == "" {
@@ -125,6 +113,10 @@ func Load() *Config {
 	c.PermissionsFile = strings.TrimSpace(os.Getenv("PERMISSIONS_FILE"))
 	if c.PermissionsFile == "" {
 		c.PermissionsFile = "./permissions.json"
+	}
+	c.AccountsFile = strings.TrimSpace(os.Getenv("ACCOUNTS_FILE"))
+	if c.AccountsFile == "" {
+		c.AccountsFile = "./accounts.json"
 	}
 
 	// 資源回收筒保留天數：預設 15；明確設為 0 可停用自動清除。非法值維持預設。
@@ -183,32 +175,4 @@ func parseTrustedProxies(raw string) []string {
 		}
 	}
 	return out
-}
-
-// parseUsers 解析 USERS 設定（格式：username:bcryptHash，多組以逗號分隔）。
-// 安全性考量：一律要求 bcrypt hash（以 $2 開頭）；填入明文者會被忽略並警告。
-func parseUsers(raw string) map[string]string {
-	users := map[string]string{}
-	for _, pair := range strings.Split(raw, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		// bcrypt hash 內含 $ 但不含 :，username 也不含 :，故以「第一個冒號」切割
-		i := strings.Index(pair, ":")
-		if i < 0 {
-			continue
-		}
-		name := strings.TrimSpace(pair[:i])
-		hash := strings.TrimSpace(pair[i+1:])
-		if name == "" || hash == "" {
-			continue
-		}
-		if !strings.HasPrefix(hash, "$2") {
-			slog.Warn("使用者密碼不是 bcrypt hash，已忽略（請用 go run ./cmd/hashpw '密碼' 產生後填入 USERS）", "user", name)
-			continue
-		}
-		users[name] = hash
-	}
-	return users
 }

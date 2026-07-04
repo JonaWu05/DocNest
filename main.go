@@ -87,8 +87,13 @@ func main() {
 		panic("載入權限設定檔失敗：" + err.Error())
 	}
 
+	accounts, err := auth.LoadAccounts(cfg.AccountsFile)
+	if err != nil {
+		panic("載入帳號設定檔失敗：" + err.Error())
+	}
+
 	st := store.New(cfg.DocRoot)
-	au := auth.New(cfg, az)
+	au := auth.New(cfg, accounts, az)
 	h := hub.New(au, az, cfg)
 	go h.Run()
 
@@ -208,6 +213,8 @@ func main() {
 	api.Use(au.Middleware())
 	{
 		api.GET("/me", au.MeHandler)
+		// 管理員手動重新載入帳號 / 權限設定（免重啟）；handler 內再驗證管理員身分
+		api.POST("/admin/reload", au.ReloadConfigHandler)
 		api.GET("/online-count", h.OnlineCountHandler)
 		api.GET("/files", fileH.ListFiles)
 		api.GET("/file", fileH.ReadFile)

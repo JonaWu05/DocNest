@@ -9,6 +9,9 @@ markdownEditor
 # 權限分組設定（含成員身分鍵，屬部署資料）；permissions.example.json 為範本可保留
 permissions.json
 
+# 帳號設定（含密碼 hash 與 Discord 白名單，屬部署資料）；accounts.example.json 為範本可保留
+accounts.json
+
 # 作業系統 / 編輯器雜項
 .DS_Store
 Thumbs.db
