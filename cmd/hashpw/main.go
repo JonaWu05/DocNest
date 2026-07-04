@@ -1,5 +1,5 @@
 // hashpw 是一個小工具，用來把明文密碼轉成 bcrypt hash，
-// 產生的 hash 可填入 .env 的 USERS 設定（格式：username:hash）。
+// 產生的 hash 可填入 accounts.json 的 local 設定（格式："帳號": "hash"）。
 //
 // 用法：
 //
@@ -25,6 +25,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 直接印出 hash，方便複製貼到 .env
+	// 直接印出 hash，方便複製貼到 accounts.json
 	fmt.Println(string(hash))
 }

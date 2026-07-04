@@ -37,11 +37,12 @@ cd DocNest
 
 # 2. 建立設定檔
 cp .env.example .env
+cp accounts.example.json accounts.json
 
-# 3. 產生帳號密碼的 bcrypt hash，填入 .env 的 USERS
+# 3. 產生帳號密碼的 bcrypt hash，填入 accounts.json 的 local
 go run ./cmd/hashpw '你的密碼'
 
-# 4. 編輯 .env，至少設定 JWT_SECRET 與 USERS（見下方設定說明）
+# 4. 編輯 .env 設定 JWT_SECRET；編輯 accounts.json 填入帳號（見下方設定說明）
 
 # 5. 啟動
 go run .
@@ -54,7 +55,6 @@ go run .
 | 變數 | 必填 | 說明 |
 |---|---|---|
 | `JWT_SECRET` | ✅ | JWT 簽章密鑰；產生：`openssl rand -base64 32` |
-| `USERS` | — | 本地帳號，格式 `帳號:bcryptHash`，多組以逗號分隔（值含 `$`，整串需用單引號）|
 | `DOC_ROOT` | — | 文件根目錄，預設 `./docs` |
 | `PORT` | — | 服務埠號，預設 `8080` |
 | `APP_TITLE` | — | 網頁標題（瀏覽器分頁與登入頁大標），預設「Markdown 編輯器」|
@@ -63,9 +63,18 @@ go run .
 | `JWT_EXPIRE_HOURS` | — | JWT 有效時數，預設 `24` |
 | `ALLOWED_ORIGINS` | — | 允許的跨來源網域（CORS 與 WebSocket 共用），逗號分隔；留空為開發模式（允許所有來源）|
 | `TRUSTED_PROXIES` | — | 信任的反向代理來源（IP 或 CIDR，逗號分隔）；架在反向代理後方時設定，才能取得真實客戶端 IP。留空為不信任任何代理 |
-| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` / `DISCORD_REDIRECT_URI` / `DISCORD_ALLOWED_IDS` | — | Discord OAuth（選填，全部設定才啟用）|
+| `HOST` | — | 服務綁定位址；留空＝綁所有介面（`0.0.0.0`）。開發可設 `127.0.0.1` 僅本機 |
+| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` / `DISCORD_REDIRECT_URI` | — | Discord OAuth（選填，全部設定才啟用）；登入白名單見 `accounts.json` |
+| `ACCOUNTS_FILE` / `PERMISSIONS_FILE` | — | 帳號 / 權限設定檔路徑，預設 `./accounts.json`、`./permissions.json` |
 
-> `.env` 含密鑰與密碼 hash，已列入 `.gitignore`，請勿提交。`docs/` 為執行期資料（等同各自的資料庫目錄），亦不納入版控，僅保留 `welcome.md` 作為範本。
+> `.env` 含密鑰，已列入 `.gitignore`，請勿提交。`docs/` 為執行期資料（等同各自的資料庫目錄），亦不納入版控，僅保留 `welcome.md` 作為範本。
+
+## 帳號與權限（accounts.json / permissions.json）
+
+- **`accounts.json`**：本地帳號（`local`：`帳號` → bcrypt hash）與 Discord 登入白名單（`discord_allowed`：User ID 陣列）。範本為 `accounts.example.json`；產生密碼 hash：`go run ./cmd/hashpw '你的密碼'`。
+- **`permissions.json`**：群組 + 路徑前綴的存取控制。範本為 `permissions.example.json`；名為 `admins` 群組的成員即管理員。
+- **免重啟熱重載**：改完上述兩檔後，管理員登入後點右上角「重載設定」（或 `POST /api/admin/reload`）即可即時生效，不必重啟服務。
+- 兩檔均含部署資料（密碼 hash、成員身分），已列入 `.gitignore`，請勿提交。
 
 
 ## 專案結構
