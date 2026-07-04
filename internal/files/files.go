@@ -107,12 +107,18 @@ func (f *Files) filterTree(nodes []*store.FileNode, subject string) []*store.Fil
 	for _, n := range nodes {
 		if n.IsDir {
 			children := f.filterTree(n.Children, subject)
+			canReadDir := f.az.Can(subject, n.Path, authz.AccessRead)
 			if len(children) > 0 || f.az.Can(subject, n.Path, authz.AccessRead) {
+				title := ""
+				if canReadDir || canReadIndexTitle(children) {
+					title = n.Title
+				}
 				out = append(out, &store.FileNode{
 					Name:     n.Name,
 					Path:     n.Path,
 					IsDir:    true,
 					Writable: f.az.Can(subject, n.Path, authz.AccessWrite),
+					Title:    title,
 					Children: children,
 				})
 			}
@@ -122,10 +128,21 @@ func (f *Files) filterTree(nodes []*store.FileNode, subject string) []*store.Fil
 				Path:     n.Path,
 				IsDir:    false,
 				Writable: f.az.Can(subject, n.Path, authz.AccessWrite),
+				Title:    n.Title,
+				IsIndex:  n.IsIndex,
 			})
 		}
 	}
 	return out
+}
+
+func canReadIndexTitle(children []*store.FileNode) bool {
+	for _, child := range children {
+		if !child.IsDir && child.IsIndex {
+			return true
+		}
+	}
+	return false
 }
 
 // ListFiles 處理 GET /api/files：取得檔案樹（快取），依使用者讀取權過濾後回傳。

@@ -4,6 +4,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -24,6 +25,8 @@ type FileNode struct {
 	Path     string      `json:"path"`               // 相對於 DOC_ROOT 的路徑（使用 / 分隔）
 	IsDir    bool        `json:"isDir"`              // 是否為資料夾
 	Writable bool        `json:"writable"`           // 目前使用者是否可寫（由呼叫端依權限標記）
+	Title    string      `json:"title,omitempty"`    // UI 顯示標題：檔案取內容標題，資料夾取 index.md 標題
+	IsIndex  bool        `json:"isIndex,omitempty"`  // 是否為資料夾首頁 index.md
 	Children []*FileNode `json:"children,omitempty"` // 子節點（僅資料夾有）
 }
 
@@ -277,6 +280,12 @@ func validateName(name string) error {
 		return errors.New("檔名過長（單段上限 255 位元組）")
 	}
 	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return errors.New("檔名只能使用英文字母、數字、-、_、.")
+	}
+	for _, r := range name {
 		if r < 0x20 || r == 0x7f {
 			return errors.New("檔名不可包含控制字元")
 		}
@@ -331,6 +340,49 @@ func IsAllowedUpload(ext string) bool {
 	return imageExts[ext] || attachExts[ext]
 }
 
+const titleReadLimit = 64 << 10
+const fallbackTitleRunes = 20
+
+// extractDisplayTitle 從文件內容取 UI 顯示標題。
+// 優先取第一個 H1；若沒有 H1，取第一個非空行前 20 個字。
+func extractDisplayTitle(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, titleReadLimit))
+	if err != nil {
+		return ""
+	}
+	var firstLine string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "# ") {
+			title := strings.TrimSpace(strings.TrimPrefix(line, "# "))
+			if title != "" {
+				return title
+			}
+		}
+		if firstLine == "" {
+			firstLine = line
+		}
+	}
+	return truncateRunes(firstLine, fallbackTitleRunes)
+}
+
+func truncateRunes(s string, max int) string {
+	runes := []rune(strings.TrimSpace(s))
+	if len(runes) <= max {
+		return string(runes)
+	}
+	return string(runes[:max])
+}
+
 // buildTree 遞迴建立指定目錄的檔案樹。
 // dirPath 為目前掃描的絕對路徑，relPath 為相對於 Root 的路徑。
 func buildTree(dirPath, relPath string) (*FileNode, error) {
@@ -352,6 +404,9 @@ func buildTree(dirPath, relPath string) (*FileNode, error) {
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+		if err := validateName(name); err != nil {
+			continue
+		}
 		// 略過自動管理的附件目錄 assets（不在檔案樹中呈現）
 		if entry.IsDir() && name == "assets" {
 			continue
@@ -371,11 +426,21 @@ func buildTree(dirPath, relPath string) (*FileNode, error) {
 			node.Children = append(node.Children, child)
 		} else if IsAllowedFile(name) {
 			node.Children = append(node.Children, &FileNode{
-				Name:  name,
-				Path:  childRel,
-				IsDir: false,
+				Name:    name,
+				Path:    childRel,
+				IsDir:   false,
+				Title:   extractDisplayTitle(childAbs),
+				IsIndex: strings.EqualFold(name, "index.md"),
 			})
 		}
+	}
+
+	for _, child := range node.Children {
+		if child.IsDir || !strings.EqualFold(child.Name, "index.md") {
+			continue
+		}
+		node.Title = child.Title
+		break
 	}
 
 	// 排序：資料夾在前、檔案在後，同類型再依名稱排序

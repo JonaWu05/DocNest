@@ -68,12 +68,16 @@ func TestExtHelpers(t *testing.T) {
 func TestBuildTree(t *testing.T) {
 	root := t.TempDir()
 	mustMkdir(t, filepath.Join(root, "notes"))
+	mustMkdir(t, filepath.Join(root, "中文dir"))
 	mustMkdir(t, filepath.Join(root, "assets", "sub")) // assets 應整個被略過
 	mustMkdir(t, filepath.Join(root, ".hidden"))       // 隱藏目錄略過
-	mustWrite(t, filepath.Join(root, "welcome.md"))
-	mustWrite(t, filepath.Join(root, "notes", "a.md"))
-	mustWrite(t, filepath.Join(root, "ignore.exe")) // 非允許副檔名略過
-	mustWrite(t, filepath.Join(root, ".secret.md")) // 隱藏檔略過
+	mustWriteContent(t, filepath.Join(root, "welcome.md"), "intro text without heading")
+	mustWriteContent(t, filepath.Join(root, "notes", "index.md"), "# 筆記資料夾\n")
+	mustWriteContent(t, filepath.Join(root, "notes", "a.md"), "\n# A 文件\nbody")
+	mustWrite(t, filepath.Join(root, "報告.md"))         // 不合法真實檔名略過
+	mustWrite(t, filepath.Join(root, "中文dir", "a.md")) // 不合法真實資料夾名整個略過
+	mustWrite(t, filepath.Join(root, "ignore.exe"))    // 非允許副檔名略過
+	mustWrite(t, filepath.Join(root, ".secret.md"))    // 隱藏檔略過
 
 	tree, err := buildTree(root, "")
 	if err != nil {
@@ -89,8 +93,20 @@ func TestBuildTree(t *testing.T) {
 		t.Errorf("頂層節點=%v want %v", names, want)
 	}
 	notes := tree.Children[0]
-	if len(notes.Children) != 1 || notes.Children[0].Name != "a.md" || notes.Children[0].Path != "notes/a.md" {
+	if notes.Title != "筆記資料夾" {
+		t.Errorf("notes Title=%q want 筆記資料夾", notes.Title)
+	}
+	if len(notes.Children) != 2 || notes.Children[0].Name != "a.md" || notes.Children[0].Path != "notes/a.md" {
 		t.Errorf("notes 子節點不正確：%+v", notes.Children)
+	}
+	if notes.Children[0].Title != "A 文件" {
+		t.Errorf("a.md Title=%q want A 文件", notes.Children[0].Title)
+	}
+	if !notes.Children[1].IsIndex {
+		t.Error("index.md 應標記 IsIndex")
+	}
+	if tree.Children[1].Title != "intro text without h" {
+		t.Errorf("welcome.md fallback Title=%q", tree.Children[1].Title)
 	}
 }
 
@@ -163,7 +179,7 @@ func TestLockSerializes(t *testing.T) {
 // TestValidateRelPath 驗證跨平台檔名規則：合法者放行、非法者拒絕。
 func TestValidateRelPath(t *testing.T) {
 	valid := []string{
-		"notes/a.md", "teamA/sub/b.txt", "報告.md", "a-b_c.1.md",
+		"notes/a.md", "teamA/sub/b.txt", "a-b_c.1.md",
 		"assets", "x/../y.md", // 穿越交給 SafeResolve，這裡不擋
 	}
 	for _, p := range valid {
@@ -179,6 +195,7 @@ func TestValidateRelPath(t *testing.T) {
 		"foo/CON.md",      // 保留裝置名
 		"nul",             // 保留裝置名（無副檔名）
 		"LPT1.txt",        // 保留裝置名（大小寫不敏感）
+		"報告.md",           // 真實路徑僅允許英文、數字與 - _ .
 		"trailing.md ",    // 段結尾空白
 		"dir/ leading.md", // 段首空白
 		"end.",            // 結尾為點
@@ -300,7 +317,12 @@ func mustMkdir(t *testing.T, p string) {
 
 func mustWrite(t *testing.T, p string) {
 	t.Helper()
-	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+	mustWriteContent(t, p, "x")
+}
+
+func mustWriteContent(t *testing.T, p, content string) {
+	t.Helper()
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

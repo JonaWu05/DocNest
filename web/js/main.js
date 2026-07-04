@@ -4,13 +4,13 @@ import { state } from "./state.js";
 import {
   modeButtons, saveBtn, exportBtn, themeBtn, attachBtn, attachInput,
   assetModal, assetTarget, autosaveToggle, tocHeader, tocToggle, tocSection, previewPane,
-  docModal, docSearch, fileSearchEl, fileTreeEl,
+  docModal, docSearch, fileSearchEl, fileTreeEl, showIndexToggleEl,
 } from "./dom.js";
 import { applyTheme } from "./theme.js";
 import { buildTOC } from "./toc.js";
 import { debounce } from "./util.js";
 import { syncFromPreview } from "./scrollSync.js";
-import { loadFileTree, createItem, filterFileTree } from "./fileTree.js";
+import { loadFileTree, createItem, filterFileTree, getShowIndexFiles, setShowIndexFiles } from "./fileTree.js";
 import { applyMode, saveFile, scheduleAutosave, openFileByPath } from "./editor.js";
 import {
   openAssetModal, closeAssetModal, createTargetFolder, uploadToLibrary,
@@ -47,6 +47,8 @@ fileSearchEl.addEventListener("keydown", (e) => {
     filterFileTree("");
   }
 });
+showIndexToggleEl.checked = getShowIndexFiles();
+showIndexToggleEl.addEventListener("change", () => setShowIndexFiles(showIndexToggleEl.checked));
 
 // 目錄區：點標題列摺疊 / 展開
 tocHeader.addEventListener("click", () => {

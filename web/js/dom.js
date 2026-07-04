@@ -2,6 +2,7 @@
 // 本檔由 type="module" 載入（等同 defer），執行時 DOM 已解析完成，故可直接取得元素。
 export const fileTreeEl = document.getElementById("file-tree");
 export const fileSearchEl = document.getElementById("file-search");
+export const showIndexToggleEl = document.getElementById("show-index-toggle");
 export const fileNameEl = document.getElementById("file-name");
 export const dirtyDotEl = document.getElementById("dirty-dot");
 const modeGroupEl = document.getElementById("mode-group");

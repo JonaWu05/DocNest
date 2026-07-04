@@ -9,10 +9,32 @@ import { promptModal, confirmModal } from "./modal.js";
 
 // 已展開的資料夾路徑集合：跨「重建檔案樹」保留，避免每次新增/改名/刪除後所有資料夾收合。
 const expandedDirs = new Set();
+const SHOW_INDEX_STORAGE_KEY = "showIndexFiles";
+let showIndexFiles = localStorage.getItem(SHOW_INDEX_STORAGE_KEY) === "1";
 
 // 目前的搜尋關鍵字：重建檔案樹（重新整理 / 新增 / 改名 / 刪除）後需重新套用，
 // 否則新建出來的 DOM 會顯示全部節點而忽略使用者正在輸入的過濾條件。
 let currentFilter = "";
+
+export function getShowIndexFiles() {
+  return showIndexFiles;
+}
+
+export async function setShowIndexFiles(show) {
+  showIndexFiles = !!show;
+  localStorage.setItem(SHOW_INDEX_STORAGE_KEY, showIndexFiles ? "1" : "0");
+  await loadFileTree();
+}
+
+function displayNameOf(node) {
+  if (node.title) return node.title;
+  if (!node.isDir) return node.name.replace(/\.[^.]+$/, "");
+  return node.name;
+}
+
+function visibleChildrenOf(node) {
+  return (node.children || []).filter(child => showIndexFiles || !child.isIndex);
+}
 
 // 建立一個 FontAwesome 圖示元素（樹狀的檔案 / 資料夾圖示）
 function makeGlyph(faClass) {
@@ -54,7 +76,9 @@ export async function loadFileTree() {
         (state.hasAccess ? "沒有任何檔案" : "沒有可存取的文件") + "</div>";
       return;
     }
-    data.files.forEach(node => fileTreeEl.appendChild(renderNode(node)));
+    data.files
+      .filter(node => showIndexFiles || !node.isIndex)
+      .forEach(node => fileTreeEl.appendChild(renderNode(node)));
     // 還原目前開啟檔案的高亮（重建後 DOM 是全新的，active 標示需重新套用）
     if (state.currentPath) {
       const active = fileTreeEl.querySelector('.tree-label[data-path="' + CSS.escape(state.currentPath) + '"]');
@@ -106,7 +130,8 @@ function filterNode(node, kw, forceShow) {
   const label = node.querySelector(":scope > .tree-label");
   const childrenWrap = node.querySelector(":scope > .tree-children");
   const path = label ? (label.dataset.path || "") : "";
-  const selfMatch = kw === "" || path.toLowerCase().includes(kw);
+  const title = label ? (label.dataset.title || "") : "";
+  const selfMatch = kw === "" || path.toLowerCase().includes(kw) || title.toLowerCase().includes(kw);
 
   if (!childrenWrap) { // 檔案節點
     const visible = forceShow || selfMatch;
@@ -196,11 +221,12 @@ function renderNode(node) {
   if (node.isDir) {
     const folderGlyph = makeGlyph("fa-folder-o");
     name.appendChild(folderGlyph);
-    name.append(node.name);
+    name.append(displayNameOf(node));
     label.appendChild(icon);
     label.appendChild(name);
     // 子項目數（大量檔案時好抓；hover / 觸控顯示操作鈕時由 CSS 讓位）
-    const childCount = node.children ? node.children.length : 0;
+    const visibleChildren = visibleChildrenOf(node);
+    const childCount = visibleChildren.length;
     if (childCount > 0) {
       const countEl = document.createElement("span");
       countEl.className = "tree-count";
@@ -210,11 +236,12 @@ function renderNode(node) {
     const actions = buildNodeActions(node);
     if (actions) label.appendChild(actions);
     label.dataset.path = node.path;
+    label.dataset.title = displayNameOf(node);
     label.dataset.writable = writableAttr;
 
     const childrenWrap = document.createElement("div");
     childrenWrap.className = "tree-children";
-    (node.children || []).forEach(child => childrenWrap.appendChild(renderNode(child)));
+    visibleChildren.forEach(child => childrenWrap.appendChild(renderNode(child)));
 
     // 依保留的展開狀態決定初始收合（預設收合）與資料夾開 / 合圖示
     const expanded = expandedDirs.has(node.path);
@@ -239,7 +266,7 @@ function renderNode(node) {
     const fileGlyph = makeGlyph(isMd ? "fa-file-text-o" : "fa-file-o");
     fileGlyph.classList.add(isMd ? "glyph-md" : "glyph-txt");
     name.appendChild(fileGlyph);
-    name.append(node.name);
+    name.append(displayNameOf(node));
     label.appendChild(icon);
     label.appendChild(name);
     // 未存檔小圓點：由 setDirty 依 state.isDirty 切換 label 上的 tree-dirty class 控制顯示
@@ -249,6 +276,7 @@ function renderNode(node) {
     const actions = buildNodeActions(node);
     if (actions) label.appendChild(actions);
     label.dataset.path = node.path;
+    label.dataset.title = displayNameOf(node);
     label.dataset.writable = writableAttr;
 
     label.addEventListener("click", () => openFile(node.path, label));

@@ -284,7 +284,7 @@ export async function openFile(path, labelEl) {
     // 此檔是否可寫：由檔案樹節點標記（找不到標記時預設可寫，伺服器端仍會擋無權限的儲存）
     state.currentWritable = !labelEl || labelEl.dataset.writable !== "";
 
-    fileNameEl.textContent = path;
+    fileNameEl.textContent = labelEl?.dataset.title || path;
     modeButtons.forEach(b => b.disabled = false);
     // 唯讀檔案：停用儲存與附件上傳（編輯器本身也會設為唯讀，見 applyMode）
     saveBtn.disabled = !state.currentWritable;
