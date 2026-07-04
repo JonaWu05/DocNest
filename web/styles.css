@@ -1483,14 +1483,95 @@ body.dark .cm-s-easymde .cm-comment {
 }
 
 /* ===== 工具列：登入者資訊 ===== */
+/* ===== 使用者選單（工具列徽章 + 下拉）===== */
+.user-menu {
+  position: relative; /* 下拉以此為定位基準 */
+  display: inline-flex;
+}
+
 .user-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 13px;
   color: var(--text);
-  max-width: 200px;
+  max-width: 220px;
   overflow: hidden;
+  cursor: pointer;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 10px;
+}
+
+.user-badge:hover {
+  background: var(--hover);
+}
+
+.user-caret {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 下拉面板：絕對定位在徽章下方靠右對齊，浮於內容之上 */
+.user-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.user-dropdown .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 14px;
+  padding: 8px 10px;
+  text-decoration: none; /* admin-link 為 <a> */
+}
+
+.user-dropdown .menu-item .fa {
+  width: 16px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.user-dropdown .menu-item:hover {
+  background: var(--hover);
+}
+
+.user-dropdown .menu-item.danger {
+  color: #ed4014;
+}
+
+.user-dropdown .menu-item.danger .fa {
+  color: #ed4014;
+}
+
+.user-dropdown .menu-item.danger:hover {
+  background: rgba(237, 64, 20, 0.1);
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
 }
 
 #user-name {

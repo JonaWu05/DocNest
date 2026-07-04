@@ -19,6 +19,41 @@ const discordBtn = document.getElementById("discord-login-btn");
 const logoutBtn = document.getElementById("logout-btn");
 const adminLink = document.getElementById("admin-link");
 const changePwBtn = document.getElementById("change-pw-btn");
+const userMenu = document.getElementById("user-menu");
+const userBadge = document.getElementById("user-badge");
+const userDropdown = document.getElementById("user-dropdown");
+
+// ===== 使用者選單下拉（工具列右側徽章）=====
+// openUserMenu / closeUserMenu / toggleUserMenu 控制下拉開合，並同步 aria-expanded。
+function closeUserMenu() {
+  userDropdown.classList.add("hidden");
+  userBadge.setAttribute("aria-expanded", "false");
+}
+function openUserMenu() {
+  userDropdown.classList.remove("hidden");
+  userBadge.setAttribute("aria-expanded", "true");
+}
+function toggleUserMenu() {
+  if (userDropdown.classList.contains("hidden")) openUserMenu();
+  else closeUserMenu();
+}
+
+// 綁定使用者選單的開合互動：點徽章切換、點外部或按 Esc 收起、點任一項目後收起。
+function initUserMenu() {
+  userBadge.addEventListener("click", (e) => { e.stopPropagation(); toggleUserMenu(); });
+  // 點選任一選單項目後收起（主題切換等仍會執行各自的既有處理）
+  userDropdown.querySelectorAll(".menu-item").forEach((item) => {
+    item.addEventListener("click", closeUserMenu);
+  });
+  // 點擊選單以外區域收起
+  document.addEventListener("click", (e) => {
+    if (!userMenu.contains(e.target)) closeUserMenu();
+  });
+  // Esc 收起
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeUserMenu();
+  });
+}
 
 // showLogin / showApp 切換登入頁與主介面的顯示。
 function showLogin() {
@@ -127,6 +162,7 @@ export function initSession() {
   loginForm.addEventListener("submit", doLocalLogin);
   discordBtn.addEventListener("click", () => { window.location.href = "/auth/discord"; });
   logoutBtn.addEventListener("click", logout);
+  initUserMenu(); // 使用者徽章下拉選單（主題 / 管理 / 改密碼 / 登出）
   // 「管理」為 <a href="/admin"> 原生導覽，無需綁定；修改密碼彈窗：
   changePwBtn.addEventListener("click", openPwModal);
   document.getElementById("pw-close").addEventListener("click", closePwModal);

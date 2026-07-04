@@ -97,18 +97,24 @@
         <label class="autosave-label" title="編輯後自動儲存">
           <input type="checkbox" id="autosave-toggle"> 自動儲存
         </label>
-        <button class="tool-btn" id="theme-btn" title="切換深色 / 淺色模式"><i class="fa fa-moon-o"></i></button>
         <!-- 目前在線人數 -->
         <span id="online-count" class="online-count" title="目前在線人數"></span>
-        <!-- 登入者資訊與登出 -->
-        <span id="user-badge" class="user-badge" title="目前登入者">
-          <span id="user-name"></span><span id="user-type" class="user-type-tag"></span>
-        </span>
-        <!-- 僅本地帳號可見：修改自己的密碼 -->
-        <button class="tool-btn hidden" id="change-pw-btn" title="修改密碼">改密碼</button>
-        <!-- 僅管理員可見：進入使用者管理頁 -->
-        <a class="tool-btn hidden" id="admin-link" href="/admin" title="使用者管理">管理</a>
-        <button class="tool-btn" id="logout-btn" title="登出">登出</button>
+        <!-- 使用者選單：點徽章展開次要動作（主題、管理、改密碼、登出），避免工具列擁擠 -->
+        <div id="user-menu" class="user-menu">
+          <button id="user-badge" class="user-badge" title="使用者選單" aria-haspopup="true" aria-expanded="false">
+            <span id="user-name"></span><span id="user-type" class="user-type-tag"></span>
+            <i class="fa fa-caret-down user-caret"></i>
+          </button>
+          <div id="user-dropdown" class="user-dropdown hidden" role="menu">
+            <button class="menu-item" id="theme-btn" role="menuitem" title="切換深色 / 淺色模式"><i class="fa fa-moon-o"></i> 深色模式</button>
+            <!-- 僅管理員可見：進入使用者管理頁 -->
+            <a class="menu-item hidden" id="admin-link" href="/admin" role="menuitem"><i class="fa fa-users"></i> 使用者管理</a>
+            <!-- 僅本地帳號可見：修改自己的密碼 -->
+            <button class="menu-item hidden" id="change-pw-btn" role="menuitem"><i class="fa fa-key"></i> 修改密碼</button>
+            <div class="menu-sep"></div>
+            <button class="menu-item danger" id="logout-btn" role="menuitem"><i class="fa fa-sign-out"></i> 登出</button>
+          </div>
+        </div>
         <button id="save-btn" title="儲存 (Ctrl+S)" disabled>儲存</button>
       </div>
       <!-- Presence：顯示誰在看/編輯目前檔案、其他在線者 -->
