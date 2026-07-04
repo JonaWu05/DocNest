@@ -15,10 +15,16 @@ export function showToast(message, type) {
   toastTimer = setTimeout(() => { toastEl.className = ""; toastTimer = null; }, duration);
 }
 
-// setDirty 標記 / 清除未儲存狀態，並同步顯示或隱藏檔名旁的未儲存圓點。
+// setDirty 標記 / 清除未儲存狀態，並同步更新檔名旁與檔案樹上的未儲存圓點。
+// 單文件編輯器同時只有「當前開啟的檔案」會 dirty，故先清掉樹上所有殘留、再標記 active 檔。
 export function setDirty(dirty) {
   state.isDirty = dirty;
   dirtyDotEl.classList.toggle("hidden", !dirty);
+  document.querySelectorAll(".tree-label.tree-dirty").forEach(el => el.classList.remove("tree-dirty"));
+  if (dirty) {
+    const active = document.querySelector(".tree-label.active");
+    if (active) active.classList.add("tree-dirty");
+  }
 }
 
 // confirmDiscardIfDirty 切換 / 關閉檔案前的未儲存確認：無變更直接放行，

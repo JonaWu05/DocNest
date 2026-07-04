@@ -198,8 +198,11 @@ body.resizing-sidebar {
   background: var(--btn-bg-hover);
 }
 
+/* 縮排 + 引導線：巢狀資料夾的層級一眼可辨 */
 .tree-children {
-  padding-left: 14px;
+  margin-left: 15px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border-soft);
 }
 
 .tree-children.collapsed {
@@ -211,6 +214,53 @@ body.resizing-sidebar {
   display: inline-block;
   text-align: center;
   color: var(--text-muted);
+}
+
+/* 資料夾子項目數：淡色小字，讓位給 hover / 觸控的操作鈕 */
+.tree-count {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.tree-label:hover .tree-count {
+  display: none;
+}
+
+/* .md / .txt 圖示區分：.md 用強調色（主要內容型別），.txt 維持淡色 */
+.tree-glyph.glyph-md {
+  color: var(--accent);
+}
+
+.tree-glyph.glyph-txt {
+  color: var(--text-muted);
+}
+
+/* 未存檔小圓點：僅 active 且 dirty 的檔案顯示（由 setDirty 控制 class） */
+.tree-dirty-dot {
+  display: none;
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tree-label.tree-dirty .tree-dirty-dot {
+  display: inline-block;
+}
+
+/* 觸控裝置沒有 hover：操作鈕常駐顯示，子項目數則隱藏以免與操作鈕擠在一起 */
+@media (hover: none) {
+  .node-actions {
+    display: flex;
+  }
+
+  .tree-count {
+    display: none;
+  }
 }
 
 /* 右側主區 */

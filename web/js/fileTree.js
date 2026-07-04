@@ -21,6 +21,12 @@ function makeGlyph(faClass) {
   return i;
 }
 
+// setFolderGlyph 依展開狀態切換資料夾的開 / 合圖示
+function setFolderGlyph(glyph, open) {
+  glyph.classList.toggle("fa-folder-open-o", open);
+  glyph.classList.toggle("fa-folder-o", !open);
+}
+
 // 將某路徑的所有上層資料夾標記為展開（新增/改名後讓目標項目可見）
 function expandAncestors(path) {
   const parts = path.split("/");
@@ -52,7 +58,10 @@ export async function loadFileTree() {
     // 還原目前開啟檔案的高亮（重建後 DOM 是全新的，active 標示需重新套用）
     if (state.currentPath) {
       const active = fileTreeEl.querySelector('.tree-label[data-path="' + CSS.escape(state.currentPath) + '"]');
-      if (active) active.classList.add("active");
+      if (active) {
+        active.classList.add("active");
+        active.classList.toggle("tree-dirty", state.isDirty); // 重建後還原未存檔圓點
+      }
     }
     updateTreeDots(); // 重新渲染後，依最新 presence 重新標示小圓點
     if (currentFilter) applyFilter(currentFilter); // 重建後重新套用目前的搜尋條件
@@ -185,10 +194,19 @@ function renderNode(node) {
   const writableAttr = node.writable ? "1" : "";
 
   if (node.isDir) {
-    name.appendChild(makeGlyph("fa-folder-o"));
+    const folderGlyph = makeGlyph("fa-folder-o");
+    name.appendChild(folderGlyph);
     name.append(node.name);
     label.appendChild(icon);
     label.appendChild(name);
+    // 子項目數（大量檔案時好抓；hover / 觸控顯示操作鈕時由 CSS 讓位）
+    const childCount = node.children ? node.children.length : 0;
+    if (childCount > 0) {
+      const countEl = document.createElement("span");
+      countEl.className = "tree-count";
+      countEl.textContent = childCount;
+      label.appendChild(countEl);
+    }
     const actions = buildNodeActions(node);
     if (actions) label.appendChild(actions);
     label.dataset.path = node.path;
@@ -198,14 +216,16 @@ function renderNode(node) {
     childrenWrap.className = "tree-children";
     (node.children || []).forEach(child => childrenWrap.appendChild(renderNode(child)));
 
-    // 依保留的展開狀態決定初始收合（預設收合）
+    // 依保留的展開狀態決定初始收合（預設收合）與資料夾開 / 合圖示
     const expanded = expandedDirs.has(node.path);
     childrenWrap.classList.toggle("collapsed", !expanded);
     icon.textContent = expanded ? "▾" : "▸";
+    setFolderGlyph(folderGlyph, expanded);
 
     label.addEventListener("click", () => {
       const collapsed = childrenWrap.classList.toggle("collapsed");
       icon.textContent = collapsed ? "▸" : "▾";
+      setFolderGlyph(folderGlyph, !collapsed);
       if (collapsed) expandedDirs.delete(node.path);
       else expandedDirs.add(node.path);
     });
@@ -214,10 +234,18 @@ function renderNode(node) {
     wrap.appendChild(childrenWrap);
   } else {
     icon.textContent = "";
-    name.appendChild(makeGlyph("fa-file-text-o"));
+    // .md 與 .txt 以不同圖示 / 顏色區分（.md 為主要內容型別，用強調色）
+    const isMd = node.name.toLowerCase().endsWith(".md");
+    const fileGlyph = makeGlyph(isMd ? "fa-file-text-o" : "fa-file-o");
+    fileGlyph.classList.add(isMd ? "glyph-md" : "glyph-txt");
+    name.appendChild(fileGlyph);
     name.append(node.name);
     label.appendChild(icon);
     label.appendChild(name);
+    // 未存檔小圓點：由 setDirty 依 state.isDirty 切換 label 上的 tree-dirty class 控制顯示
+    const dot = document.createElement("span");
+    dot.className = "tree-dirty-dot";
+    label.appendChild(dot);
     const actions = buildNodeActions(node);
     if (actions) label.appendChild(actions);
     label.dataset.path = node.path;
