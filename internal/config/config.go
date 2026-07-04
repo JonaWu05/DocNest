@@ -24,6 +24,7 @@ type Config struct {
 	DocRoot         string   // 文件根目錄（絕對路徑）
 	AppTitle        string   // 瀏覽器分頁標題與登入頁大標
 	LoginBg         string   // 登入頁自訂背景圖（CSS url 或 /static 路徑）
+	Host            string   // 服務綁定位址（空＝所有介面 0.0.0.0；可設 127.0.0.1 僅本機、或指定本機 IP）
 	Port            string   // 服務埠號
 	PermissionsFile string   // 權限設定檔路徑
 	TrustedProxies  []string // 信任的反向代理（IP/CIDR）
@@ -114,6 +115,9 @@ func Load() *Config {
 		c.AppTitle = "Markdown 編輯器"
 	}
 	c.LoginBg = strings.TrimSpace(os.Getenv("LOGIN_BG"))
+	// 綁定位址：留空＝綁所有介面（0.0.0.0，可由區網其他裝置連入）；
+	// 開發時可設 127.0.0.1 僅本機可連，部署時可指定特定本機 IP。
+	c.Host = strings.TrimSpace(os.Getenv("HOST"))
 	c.Port = os.Getenv("PORT")
 	if c.Port == "" {
 		c.Port = "8080"

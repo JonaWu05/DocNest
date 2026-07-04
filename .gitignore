@@ -1,5 +1,6 @@
 # 編譯產物（Go 二進位檔）
 *.exe
+gowatch.yaml
 markdownEditor
 
 # 環境變數（含密鑰、密碼 hash，不可進版控）；.env.example 可保留作為範本

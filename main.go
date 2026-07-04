@@ -33,8 +33,8 @@ import (
 	"markdownEditor/internal/authz"
 	"markdownEditor/internal/collab"
 	"markdownEditor/internal/config"
-	"markdownEditor/internal/filewatch"
 	"markdownEditor/internal/files"
+	"markdownEditor/internal/filewatch"
 	"markdownEditor/internal/hub"
 	"markdownEditor/internal/store"
 	"markdownEditor/internal/upload"
@@ -112,8 +112,8 @@ func main() {
 			return store.FileVersion(info), true
 		},
 		func(rel string) { // 外部改檔：兩路通知
-			collabH.NotifyExternalChange(rel)  // 共編房間：橫幅 + 停 saver 自動落檔
-			h.BroadcastFileUpdated(rel, "")    // 非共編開檔者：file_updated（savedBy="" 表外部變更）
+			collabH.NotifyExternalChange(rel) // 共編房間：橫幅 + 停 saver 自動落檔
+			h.BroadcastFileUpdated(rel, "")   // 非共編開檔者：file_updated（savedBy="" 表外部變更）
 		},
 	)
 	go watcher.Run()
@@ -228,7 +228,8 @@ func main() {
 	// ===== 啟動服務並支援優雅關閉 =====
 	// 收到 SIGINT/SIGTERM 時停止接收新連線，給既有請求一段時間收尾，再結束程序。
 	srv := &http.Server{
-		Addr:    ":" + cfg.Port,
+		// 綁定位址：cfg.Host 為空時為 ":port"（綁所有介面）；指定 HOST 則只綁該位址（如 127.0.0.1 僅本機）。
+		Addr:    cfg.Host + ":" + cfg.Port,
 		Handler: r,
 		// ReadHeaderTimeout 限制讀取請求標頭的時間，是 slowloris（慢速送標頭佔住連線）的主要防線。
 		ReadHeaderTimeout: 10 * time.Second,
@@ -246,7 +247,7 @@ func main() {
 			panic("伺服器啟動失敗：" + err.Error())
 		}
 	}()
-	slog.Info("伺服器啟動", "port", cfg.Port)
+	slog.Info("伺服器啟動", "addr", srv.Addr)
 
 	<-ctx.Done()
 	stop() // 還原預設訊號處理，讓再按一次 Ctrl-C 可強制結束
