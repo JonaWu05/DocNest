@@ -3,6 +3,7 @@
   "//default": "未命中任何規則時的預設權限：none（建議，預設全擋）/ read / write。",
   "//members": "身分鍵格式：本地帳號為 local:<帳號>，Discord 為 discord:<使用者ID>（非顯示名稱）。特殊值 \"*\" 代表「所有已登入者」，常用來把首頁開放給大家。",
   "//rules": "path 為相對 DOC_ROOT 的路徑前綴（\"\" 代表整個根目錄）；access 為 read 或 write（write 隱含 read）。比對採最長前綴、多群組取最寬鬆。",
+  "//admins": "名為 admins 的群組其具名成員即「管理員」，可在介面點「重載設定」熱重載 accounts.json 與 permissions.json（免重啟）。",
 
   "default": "none",
   "groups": {

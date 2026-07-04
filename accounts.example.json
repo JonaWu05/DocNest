@@ -1,0 +1,12 @@
+{
+  "_comment": "複製本檔為 accounts.json 後填入實際值。本地帳號 + Discord 登入白名單，可由管理員在介面點「重載設定」熱重載、免重啟。local 為 username -> bcrypt hash（產生：go run ./cmd/hashpw '你的密碼'）；discord_allowed 為允許登入的 Discord User ID。",
+
+  "local": {
+    "alice": "$2a$10$請填入bcryptHash",
+    "bob": "$2a$10$請填入bcryptHash"
+  },
+
+  "discord_allowed": [
+    "請填入允許登入的DiscordUserID"
+  ]
+}

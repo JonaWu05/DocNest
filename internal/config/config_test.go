@@ -22,23 +22,6 @@ func TestParseBoolEnv(t *testing.T) {
 	}
 }
 
-func TestParseUsers(t *testing.T) {
-	// alice/carol 為 bcrypt（保留）；bob 為明文（忽略）；nocolon 無冒號（忽略）
-	u := parseUsers("alice:$2a$10$abc,bob:plaintext,nocolon,  carol:$2b$10$xyz  ")
-	if _, ok := u["alice"]; !ok {
-		t.Error("alice（bcrypt）應保留")
-	}
-	if _, ok := u["carol"]; !ok {
-		t.Error("carol（bcrypt，去空白）應保留")
-	}
-	if _, ok := u["bob"]; ok {
-		t.Error("bob（明文）應被忽略")
-	}
-	if len(u) != 2 {
-		t.Errorf("應有 2 位使用者，得到 %d：%v", len(u), u)
-	}
-}
-
 func TestParseTrustedProxies(t *testing.T) {
 	if got := parseTrustedProxies(""); got != nil {
 		t.Errorf("空字串應回傳 nil，得到 %v", got)

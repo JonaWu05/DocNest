@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -42,18 +43,20 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Auth 綁定設定與授權判斷，並持有登入限流狀態。取代原本散落的全域。
+// Auth 綁定設定、帳號設定與授權判斷，並持有登入限流狀態。取代原本散落的全域。
 type Auth struct {
-	cfg *config.Config
-	az  *authz.Authz
+	cfg      *config.Config
+	az       *authz.Authz
+	accounts *Accounts
 
 	loginMu       sync.Mutex
 	loginAttempts map[string]*loginAttempt
 }
 
-// New 建立 Auth；需要設定（使用者/JWT/Discord）與授權器（供登入後判斷可見性）。
-func New(cfg *config.Config, az *authz.Authz) *Auth {
-	return &Auth{cfg: cfg, az: az, loginAttempts: map[string]*loginAttempt{}}
+// New 建立 Auth；需要設定（JWT/Discord）、帳號設定（本地帳號/Discord 白名單，可熱重載）
+// 與授權器（供登入後判斷可見性）。
+func New(cfg *config.Config, accounts *Accounts, az *authz.Authz) *Auth {
+	return &Auth{cfg: cfg, az: az, accounts: accounts, loginAttempts: map[string]*loginAttempt{}}
 }
 
 // ===== JWT =====
@@ -190,7 +193,7 @@ func (a *Auth) LoginHandler(c *gin.Context) {
 		return
 	}
 
-	hash, ok := a.cfg.Users[req.Username]
+	hash, ok := a.accounts.Lookup(req.Username)
 	// 帳號不存在或密碼錯誤都回傳相同訊息，避免洩漏帳號是否存在
 	if !ok {
 		a.recordLoginFailure(ip)
@@ -227,7 +230,27 @@ func (a *Auth) MeHandler(c *gin.Context) {
 		// 權限摘要：前端據此顯示歡迎頁、隱藏無權限的操作（伺服器端仍為真正防線）
 		"has_access":     a.az.HasAnyRead(subject),
 		"can_write_root": a.az.Can(subject, "", authz.AccessWrite),
+		"is_admin":       a.az.IsAdmin(subject),
 	})
+}
+
+// ReloadConfigHandler 處理 POST /api/admin/reload：僅管理員可呼叫，
+// 重新載入帳號設定與權限設定（免重啟）。任一檔解析失敗即回 400 並保留原有設定。
+func (a *Auth) ReloadConfigHandler(c *gin.Context) {
+	if !a.az.IsAdmin(authz.SubjectOf(c)) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "需要管理員權限"})
+		return
+	}
+	if err := a.accounts.Reload(a.cfg.AccountsFile); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "帳號設定重新載入失敗：" + err.Error()})
+		return
+	}
+	if err := a.az.Reload(a.cfg.PermissionsFile); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "權限設定重新載入失敗：" + err.Error()})
+		return
+	}
+	slog.Info("設定已由管理員手動重新載入", "by", c.GetString("username"))
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 // randomState 產生一段隨機字串，作為 OAuth2 的 state 參數以防 CSRF。
@@ -313,7 +336,7 @@ func (a *Auth) DiscordCallbackHandler(c *gin.Context) {
 	}
 
 	// 4) 白名單檢查：只有名單內的 Discord User ID 可登入
-	if !a.cfg.DiscordAllowed[du.ID] {
+	if !a.accounts.IsDiscordAllowed(du.ID) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "此 Discord 帳號未被授權使用本系統"})
 		return
 	}

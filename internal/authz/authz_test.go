@@ -98,6 +98,80 @@ func TestLoadInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestIsAdmin(t *testing.T) {
+	a, _ := Load(writePerms(t, `{"default":"none","groups":{
+	  "admins":{"members":["local:boss","*"],"rules":[{"path":"","access":"write"}]},
+	  "editors":{"members":["local:alice"],"rules":[{"path":"teamA","access":"write"}]}
+	}}`))
+	if !a.IsAdmin("local:boss") {
+		t.Error("admins 具名成員應為管理員")
+	}
+	if a.IsAdmin("local:alice") {
+		t.Error("非 admins 成員不應為管理員")
+	}
+	if a.IsAdmin("*") || a.IsAdmin("local:nobody") {
+		t.Error("\"*\" 萬用成員不應被視為管理員")
+	}
+
+	// 停用模式（無設定檔）：所有登入者視為管理員
+	dis, _ := Load(filepath.Join(t.TempDir(), "nonexistent.json"))
+	if !dis.IsAdmin("anyone") {
+		t.Error("停用模式應視所有人為管理員")
+	}
+}
+
+func TestReload(t *testing.T) {
+	p := writePerms(t, `{"default":"none","groups":{
+	  "editors":{"members":["local:alice"],"rules":[{"path":"teamA","access":"write"}]}
+	}}`)
+	a, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.Can("local:alice", "teamA/x.md", AccessWrite) {
+		t.Fatal("重載前 alice 應可寫 teamA")
+	}
+
+	// 覆寫設定檔：改由 bob 管 teamB，並使 bob 成為管理員
+	if err := os.WriteFile(p, []byte(`{"default":"none","groups":{
+	  "admins":{"members":["local:bob"],"rules":[{"path":"","access":"write"}]},
+	  "editors":{"members":["local:bob"],"rules":[{"path":"teamB","access":"write"}]}
+	}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Reload(p); err != nil {
+		t.Fatal(err)
+	}
+
+	if a.Can("local:alice", "teamA/x.md", AccessWrite) {
+		t.Error("重載後 alice 的舊規則應消失")
+	}
+	if !a.Can("local:bob", "teamB/y.md", AccessWrite) {
+		t.Error("重載後 bob 的新規則應生效")
+	}
+	if !a.IsAdmin("local:bob") {
+		t.Error("重載後 bob 應為管理員")
+	}
+}
+
+func TestReloadInvalidKeepsOld(t *testing.T) {
+	p := writePerms(t, `{"default":"none","groups":{
+	  "editors":{"members":["local:alice"],"rules":[{"path":"teamA","access":"write"}]}
+	}}`)
+	a, _ := Load(p)
+
+	// 寫入半形 JSON：Reload 應回錯且不動既有設定
+	if err := os.WriteFile(p, []byte("{ broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Reload(p); err == nil {
+		t.Error("解析失敗應回傳錯誤")
+	}
+	if !a.Can("local:alice", "teamA/x.md", AccessWrite) {
+		t.Error("重載失敗後應保留舊設定")
+	}
+}
+
 func TestRequireAccess(t *testing.T) {
 	a, _ := Load(writePerms(t, `{"default":"none","groups":{
 	  "editors":{"members":["local:alice"],"rules":[{"path":"teamA","access":"write"}]}

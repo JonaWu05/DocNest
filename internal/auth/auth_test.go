@@ -21,7 +21,11 @@ func newTestAuth(t *testing.T) *Auth {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(cfg, az)
+	accounts, err := LoadAccounts(filepath.Join(t.TempDir(), "none-accounts.json")) // 空帳號即可
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(cfg, accounts, az)
 }
 
 func TestJWTRoundTrip(t *testing.T) {
@@ -47,7 +51,7 @@ func TestParseJWTRejectsBadToken(t *testing.T) {
 		t.Error("被竄改的 token 應驗證失敗")
 	}
 	// 換一把密鑰驗證同一個 token → 應失敗
-	other := New(&config.Config{JWTSecret: []byte("different-secret"), JWTExpire: time.Hour}, a.az)
+	other := New(&config.Config{JWTSecret: []byte("different-secret"), JWTExpire: time.Hour}, a.accounts, a.az)
 	if _, err := other.ParseJWT(tok); err == nil {
 		t.Error("錯誤密鑰應驗證失敗")
 	}

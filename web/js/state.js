@@ -17,5 +17,6 @@ export const state = {
   // 權限分組相關（由 /api/me 與檔案樹節點提供；伺服器端仍為真正防線，前端僅控制呈現）
   hasAccess: true,        // 是否有任何可讀內容；否則登入後顯示歡迎頁
   canWriteRoot: true,     // 是否可在根目錄新增檔案/資料夾
+  isAdmin: false,         // 是否為管理員（可重新載入帳號 / 權限設定）
   currentWritable: true,  // 目前開啟的檔案是否可寫（決定能否編輯/儲存）
 };

@@ -17,6 +17,7 @@ const loginUser = document.getElementById("login-username");
 const loginPass = document.getElementById("login-password");
 const discordBtn = document.getElementById("discord-login-btn");
 const logoutBtn = document.getElementById("logout-btn");
+const reloadConfigBtn = document.getElementById("reload-config-btn");
 
 // showLogin / showApp 切換登入頁與主介面的顯示。
 function showLogin() {
@@ -46,6 +47,8 @@ async function enterAppWithMe() {
     // 權限摘要（未啟用權限分組或舊後端時欄位可能不存在，預設給最寬鬆值以維持相容）
     state.hasAccess = me.has_access !== false;
     state.canWriteRoot = me.can_write_root !== false;
+    state.isAdmin = me.is_admin === true;
+    reloadConfigBtn.classList.toggle("hidden", !state.isAdmin); // 僅管理員可見「重載設定」
     showApp();
     onEnterApp(me.default_doc); // 把首頁文件設定一併交給主介面初始化
   } catch (e) {
@@ -80,11 +83,28 @@ async function doLocalLogin(e) {
   }
 }
 
+// doReloadConfig 管理員手動重新載入帳號 / 權限設定（免重啟）。
+async function doReloadConfig() {
+  reloadConfigBtn.disabled = true;
+  try {
+    const res = await authFetch(API_BASE + "/api/admin/reload", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "重新載入失敗");
+    reloadConfigBtn.textContent = "已重載 ✓";
+    setTimeout(() => { reloadConfigBtn.textContent = "重載設定"; }, 2000);
+  } catch (err) {
+    alert("重新載入設定失敗：" + err.message);
+  } finally {
+    reloadConfigBtn.disabled = false;
+  }
+}
+
 // 初始化登入流程：綁定事件，並依 token 來源決定顯示登入頁或主介面。
 export function initSession() {
   loginForm.addEventListener("submit", doLocalLogin);
   discordBtn.addEventListener("click", () => { window.location.href = "/auth/discord"; });
   logoutBtn.addEventListener("click", logout);
+  reloadConfigBtn.addEventListener("click", doReloadConfig);
   // 任何受保護請求遇 401：自動登出回登入頁
   window.addEventListener("auth:unauthorized", logout);
 
