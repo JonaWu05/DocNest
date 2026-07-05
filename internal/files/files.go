@@ -2,6 +2,7 @@
 package files
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -416,17 +417,11 @@ func (f *Files) Rename(c *gin.Context) {
 		return
 	}
 
-	if _, err := os.Stat(newAbs); err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "目標已存在"})
-		return
-	}
-
-	if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
-		httpx.ServerError(c, "建立目錄失敗", err)
-		return
-	}
-
-	if err := os.Rename(oldAbs, newAbs); err != nil {
+	if err := store.RenameFile(oldAbs, newAbs); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			c.JSON(http.StatusConflict, gin.H{"error": "目標已存在"})
+			return
+		}
 		httpx.ServerError(c, "重新命名失敗", err)
 		return
 	}

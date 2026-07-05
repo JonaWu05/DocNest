@@ -169,7 +169,7 @@ async function renameAsset(item, ev) {
   if (!input || !input.trim() || input.trim() === cur) return;
 
   let newName = input.trim();
-  // 未輸入副檔名時自動補回原本的副檔名（後端也會擋副檔名變更）
+  // 未輸入副檔名時自動補回原本的副檔名（僅為輸入輔助，副檔名限制由後端強制）
   const dot = cur.lastIndexOf(".");
   const ext = dot >= 0 ? cur.slice(dot) : "";
   if (ext && !newName.toLowerCase().endsWith(ext.toLowerCase())) newName += ext;

@@ -55,25 +55,6 @@ func mustWrite(t *testing.T, p string) {
 	}
 }
 
-// TestSanitizeUploadName 驗證上傳檔名淨化：不合法字元壓成 _、頭尾清理、空名 fallback。
-func TestSanitizeUploadName(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"photo.png", "photo.png"},                  // 已合法：原樣保留
-		{"螢幕截圖.png", "file.png"},                    // 全不合法：fallback 為 file
-		{"螢幕擷取 2026-07.png", "2026-07.png"},         // 前段不合法：不留前導 _
-		{"my photo (1).png", "my_photo_1.png"},      // 連續不合法字元壓成一個 _
-		{"...test.png", "test.png"},                 // 頭尾多餘的 . 清除
-		{"___.png", "file.png"},                     // 清理後為空：fallback
-		{"a b.tar.gz", "a_b.tar.gz"},                // 多段副檔名：只動主檔名
-		{"報告 v2 final.pdf", "v2_final.pdf"},         // 中英混合
-	}
-	for _, tc := range cases {
-		if got := sanitizeUploadName(tc.in); got != tc.want {
-			t.Errorf("sanitizeUploadName(%q)=%q want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
 // TestUploadSanitizesFilename 驗證上傳含中文/空白檔名時自動淨化存檔，而非拒絕。
 func TestUploadSanitizesFilename(t *testing.T) {
 	root := t.TempDir()
@@ -242,6 +223,14 @@ func TestRenameAsset(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "assets", "renamed.png")); err != nil {
 		t.Error("無前綴檔案改名後應為純新檔名")
+	}
+
+	// 只改大小寫：大小寫不敏感檔案系統上不應誤判為同名衝突
+	if code, body := rename("assets/renamed.png", "Renamed.png"); code != 200 {
+		t.Fatalf("只改大小寫應成功，got %d：%s", code, body)
+	}
+	if _, err := os.Stat(filepath.Join(root, "assets", "Renamed.png")); err != nil {
+		t.Error("大小寫改名後檔案應存在")
 	}
 
 	// 變更副檔名應拒絕

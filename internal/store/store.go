@@ -203,10 +203,32 @@ func (s *Store) InvalidateAssets() {
 	s.assetMu.Unlock()
 }
 
+// RenameFile 執行改名/移動的共用核心：目標已存在時回傳 os.ErrExist（呼叫端轉為 409），
+// 必要時先建立目標所在資料夾。路徑安全（SafeResolve）與權限檢查由呼叫端負責。
+// 目標與來源為同一檔案時不視為衝突——大小寫不敏感的檔案系統（Windows）上，
+// 「只改大小寫」的改名會 Stat 到來源自己，需放行讓 os.Rename 完成正名。
+func RenameFile(oldAbs, newAbs string) error {
+	if newInfo, err := os.Stat(newAbs); err == nil {
+		oldInfo, serr := os.Stat(oldAbs)
+		if serr != nil || !os.SameFile(oldInfo, newInfo) {
+			return os.ErrExist
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(oldAbs, newAbs)
+}
+
+// skipEntryName 判斷掃描目錄時是否略過此名稱：隱藏項目（. 開頭）與不合法真實名稱不列入。
+// buildTree 與 scanAssets 共用，主檔案樹與附件庫對「哪些名稱存在」的認知因此一致。
+func skipEntryName(name string) bool {
+	return strings.HasPrefix(name, ".") || validateName(name) != nil
+}
+
 // scanAssets 走訪 Root/assets，回傳所有檔案與資料夾。
 // assets 目錄不存在時回傳空清單（非錯誤）。
-// 略過規則與 buildTree 同步：隱藏項目（. 開頭）與不合法真實名稱（validateName）
-// 均不列入，資料夾不合法時整個子樹跳過。
+// 略過名稱（skipEntryName）為資料夾時，其整個子樹一併跳過。
 func scanAssets(root string) ([]AssetEntry, error) {
 	out := []AssetEntry{}
 	assetsRoot := filepath.Join(root, "assets")
@@ -228,13 +250,13 @@ func scanAssets(root string) ([]AssetEntry, error) {
 		}
 		slash := filepath.ToSlash(rel)
 		if d.IsDir() {
-			if strings.HasPrefix(d.Name(), ".") || validateName(d.Name()) != nil {
+			if skipEntryName(d.Name()) {
 				return filepath.SkipDir
 			}
 			out = append(out, AssetEntry{Path: slash, Name: d.Name(), IsDir: true})
 			return nil
 		}
-		if strings.HasPrefix(d.Name(), ".") || validateName(d.Name()) != nil {
+		if skipEntryName(d.Name()) {
 			return nil
 		}
 		var size int64
@@ -280,29 +302,18 @@ func ValidateRelPath(p string) error {
 	return nil
 }
 
+// invalidNameRuns 比對真實檔名中不允許的字元連段。
+// 合法字元集（英文字母、數字、-、_、.）以此 regexp 為唯一定義，
+// 由 validateName（驗證）與 SanitizeName（淨化）共用。
+var invalidNameRuns = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+
 // validateName 驗證單一路徑分段（檔名或資料夾名）。
 func validateName(name string) error {
 	if len(name) > 255 {
 		return errors.New("檔名過長（單段上限 255 位元組）")
 	}
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
-			continue
-		}
+	if invalidNameRuns.MatchString(name) {
 		return errors.New("檔名只能使用英文字母、數字、-、_、.")
-	}
-	for _, r := range name {
-		if r < 0x20 || r == 0x7f {
-			return errors.New("檔名不可包含控制字元")
-		}
-		switch r {
-		case '<', '>', ':', '"', '|', '?', '*':
-			return fmt.Errorf("檔名不可包含字元 %q", r)
-		}
-	}
-	// 首尾空白、結尾的點：在 Windows 會被靜默修剪，易造成混淆或繞過比對。
-	if strings.TrimSpace(name) != name {
-		return errors.New("檔名首尾不可有空白")
 	}
 	if strings.HasSuffix(name, ".") {
 		return errors.New("檔名結尾不可為點")
@@ -316,6 +327,24 @@ func validateName(name string) error {
 		return fmt.Errorf("檔名為系統保留名稱：%s", name)
 	}
 	return nil
+}
+
+// SanitizeName 將任意原始檔名（如上傳檔名）淨化為通過 validateName 的真實檔名：
+// 主檔名中每段不合法字元壓成一個 _、去除頭尾多餘的 _ 與 .，副檔名保留不動；
+// 主檔名清空（如純中文檔名）或撞上系統保留名稱時，以 fallback 代替主檔名。
+func SanitizeName(name, fallback string) string {
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	base = strings.Trim(invalidNameRuns.ReplaceAllString(base, "_"), "_.")
+	// 保留名比對範圍與 validateName 一致：第一個點之前的主檔名
+	first := base
+	if i := strings.IndexByte(base, '.'); i >= 0 {
+		first = base[:i]
+	}
+	if base == "" || reservedNames[strings.ToLower(first)] {
+		base = fallback
+	}
+	return base + ext
 }
 
 // isAllowedFile 判斷檔案副檔名是否為允許的文件類型（.md 或 .txt）
@@ -410,11 +439,7 @@ func buildTree(dirPath, relPath string) (*FileNode, error) {
 
 	for _, entry := range entries {
 		name := entry.Name()
-		// 略過隱藏檔案與資料夾（以 . 開頭）
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
-		if err := validateName(name); err != nil {
+		if skipEntryName(name) {
 			continue
 		}
 		// 略過自動管理的附件目錄 assets（不在檔案樹中呈現）

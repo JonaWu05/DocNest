@@ -2,6 +2,7 @@
 package upload
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -45,36 +46,6 @@ type Upload struct {
 // New 建立 Upload handler 集合。
 func New(st *store.Store, az *authz.Authz) *Upload {
 	return &Upload{store: st, az: az}
-}
-
-// sanitizeUploadName 將原始上傳檔名淨化為合法真實檔名（英文字母、數字、-、_、.）：
-// 主檔名中每一段連續的不合法字元壓成一個 _，並去除頭尾多餘的 _ 與 .；
-// 若主檔名被清空（如純中文檔名）則以 file 代替。副檔名保留不動。
-func sanitizeUploadName(name string) string {
-	ext := filepath.Ext(name)
-	base := strings.TrimSuffix(name, ext)
-
-	var b strings.Builder
-	pendingSep := false
-	for _, r := range base {
-		valid := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
-			r == '-' || r == '_' || r == '.'
-		if !valid {
-			pendingSep = true
-			continue
-		}
-		if pendingSep && b.Len() > 0 {
-			b.WriteByte('_')
-		}
-		pendingSep = false
-		b.WriteRune(r)
-	}
-
-	cleaned := strings.Trim(b.String(), "_.")
-	if cleaned == "" {
-		cleaned = "file"
-	}
-	return cleaned + ext
 }
 
 // resolveAssetDir 驗證並正規化 dir 參數：必須落在 assets 樹底下，回傳正規化後的相對路徑。
@@ -125,8 +96,8 @@ func (u *Upload) UploadFile(c *gin.Context) {
 		return
 	}
 
-	// 淨化檔名後產生不重複的存放名（時間戳記 + 淨化檔名），filepath.Base 可去除任何路徑成分
-	origName := sanitizeUploadName(filepath.Base(fileHeader.Filename))
+	// 存放名 = 時間戳記 + 淨化後檔名；filepath.Base 先去除客戶端夾帶的路徑成分
+	origName := store.SanitizeName(filepath.Base(fileHeader.Filename), "file")
 	if err := store.ValidateRelPath(origName); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "檔名不合法：" + err.Error()})
 		return
@@ -298,7 +269,7 @@ func (u *Upload) RenameAsset(c *gin.Context) {
 		return
 	}
 
-	// 副檔名不可變更：既保住檔案類型，也阻擋改成允許清單以外的類型
+	// 副檔名不可變更——改副檔名等同繞過上傳時的類型允許清單
 	oldBase := path.Base(oldRel)
 	if !strings.EqualFold(filepath.Ext(newName), filepath.Ext(oldBase)) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "不可變更副檔名"})
@@ -319,17 +290,16 @@ func (u *Upload) RenameAsset(c *gin.Context) {
 		return
 	}
 
-	// 來源與目的地同資料夾，仍逐一檢查寫入權以防未來規則變化
+	// 改名同時影響來源與目的地，兩端都需具備寫入權
 	if !u.az.RequireAccess(c, oldRel, authz.AccessWrite) || !u.az.RequireAccess(c, u.store.RelOf(newAbs), authz.AccessWrite) {
 		return
 	}
 
-	if _, err := os.Stat(newAbs); err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "目標檔名已存在"})
-		return
-	}
-
-	if err := os.Rename(oldAbs, newAbs); err != nil {
+	if err := store.RenameFile(oldAbs, newAbs); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			c.JSON(http.StatusConflict, gin.H{"error": "目標檔名已存在"})
+			return
+		}
 		httpx.ServerError(c, "重新命名失敗", err)
 		return
 	}
