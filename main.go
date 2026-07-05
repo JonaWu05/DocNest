@@ -259,6 +259,7 @@ func main() {
 		api.POST("/upload", uploadH.UploadFile)
 		api.GET("/assets", uploadH.ListAssets)
 		api.GET("/asset-folders", uploadH.ListAssetFolders)
+		api.POST("/asset/rename", uploadH.RenameAsset)
 	}
 
 	// ===== 啟動服務並支援優雅關閉 =====

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -344,6 +345,10 @@ func IsAllowedUpload(ext string) bool {
 	ext = strings.ToLower(ext)
 	return imageExts[ext] || attachExts[ext]
 }
+
+// TimestampPrefix 比對上傳附件檔名的「時間戳記_」前綴
+// （上傳時由 UploadFile 加上，與前端 assetDisplayName 的清理規則對應）。
+var TimestampPrefix = regexp.MustCompile(`^\d+_`)
 
 const titleReadLimit = 64 << 10
 const fallbackTitleRunes = 20

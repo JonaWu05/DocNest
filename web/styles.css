@@ -110,8 +110,13 @@ body.resizing-sidebar {
   line-height: 1;
 }
 
-.icon-btn:hover {
+.icon-btn:hover:not(:disabled) {
   background: var(--btn-bg-hover);
+}
+
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* 檔案樹搜尋框 */
@@ -912,22 +917,72 @@ body.dark .cm-s-easymde .cm-comment {
   color: var(--text-muted);
 }
 
-.asset-target-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-muted);
+/* 附件庫：兩欄版面（左資料夾樹、右附件格）；固定高度讓兩欄各自捲動 */
+.asset-modal-box {
+  width: 860px;
+  height: 82vh;
 }
 
-.modal-toolbar select {
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 6px;
+.asset-current-dir {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
-  max-width: 220px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.asset-folder-tree {
+  flex: 0 0 200px;
+  border-right: 1px solid var(--border-soft);
+  overflow-y: auto;
+  padding: 8px 6px;
+}
+
+.asset-tree-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.asset-tree-label:hover {
+  background: var(--bg-alt);
+}
+
+.asset-tree-label.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.asset-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asset-tree-lock {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.55;
+}
+
+.asset-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .modal-subtoolbar {
@@ -936,11 +991,13 @@ body.dark .cm-s-easymde .cm-comment {
 }
 
 .asset-grid {
+  flex: 1;
   padding: 14px 16px;
   overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 12px;
+  align-content: start;
 }
 
 .asset-item {
@@ -965,10 +1022,10 @@ body.dark .cm-s-easymde .cm-comment {
   transform: translateY(-2px);
 }
 
-.asset-del {
+/* 附件項目的操作鈕（重新命名 / 刪除）：hover 時顯示於右上角 */
+.asset-act {
   position: absolute;
   top: 4px;
-  right: 4px;
   border: none;
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
@@ -980,12 +1037,38 @@ body.dark .cm-s-easymde .cm-comment {
   display: none;
 }
 
-.asset-item:hover .asset-del {
+.asset-del {
+  right: 4px;
+}
+
+.asset-ren {
+  right: 28px;
+}
+
+.asset-item:hover .asset-act {
   display: block;
 }
 
 .asset-del:hover {
   background: #ed4014;
+}
+
+.asset-ren:hover {
+  background: var(--accent);
+}
+
+/* 觸控裝置沒有 hover：附件操作鈕常駐顯示（比照檔案樹節點操作鈕） */
+@media (hover: none) {
+  .asset-act {
+    display: block;
+  }
+}
+
+/* 窄螢幕：縮窄左側資料夾樹，把空間留給附件格 */
+@media (max-width: 768px) {
+  .asset-folder-tree {
+    flex-basis: 140px;
+  }
 }
 
 .asset-thumb {

@@ -20,9 +20,6 @@ import (
 	"github.com/JonaWu05/DocNest/internal/store"
 )
 
-// tsPrefix 比對上傳檔名的「時間戳記_」前綴（對應前端 assetDisplayName 的清理規則）
-var tsPrefix = regexp.MustCompile(`^\d+_`)
-
 // maxWriteSize 為單次寫入檔案的 request body 上限（10 MB）。
 const maxWriteSize = 10 << 20
 
@@ -480,7 +477,7 @@ func (f *Files) Raw(c *gin.Context) {
 		// 避免同一頁/重複瀏覽反覆回源。private：含 token，不可由中介快取共用。
 		c.Header("Cache-Control", "private, max-age=86400")
 	} else {
-		dlName := tsPrefix.ReplaceAllString(filepath.Base(absPath), "")
+		dlName := store.TimestampPrefix.ReplaceAllString(filepath.Base(absPath), "")
 		c.Header("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(dlName))
 	}
 

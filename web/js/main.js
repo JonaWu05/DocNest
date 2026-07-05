@@ -3,7 +3,7 @@
 import { state } from "./state.js";
 import {
   modeButtons, saveBtn, exportBtn, themeBtn, attachBtn, attachInput,
-  assetModal, assetTarget, autosaveToggle, tocHeader, tocToggle, tocSection, previewPane,
+  assetModal, autosaveToggle, tocHeader, tocToggle, tocSection, previewPane,
   docModal, docSearch, fileSearchEl, fileTreeEl, showIndexToggleEl,
 } from "./dom.js";
 import { applyTheme } from "./theme.js";
@@ -13,7 +13,7 @@ import { syncFromPreview } from "./scrollSync.js";
 import { loadFileTree, createItem, filterFileTree, getShowIndexFiles, setShowIndexFiles } from "./fileTree.js";
 import { applyMode, saveFile, scheduleAutosave, openFileByPath } from "./editor.js";
 import {
-  openAssetModal, closeAssetModal, createTargetFolder, uploadToLibrary,
+  openAssetModal, closeAssetModal, createAssetFolder, uploadToLibrary,
 } from "./assets.js";
 import { closeDocPicker, renderDocList } from "./docPicker.js";
 import { exportPDF } from "./exportPdf.js";
@@ -71,7 +71,7 @@ trashModal.addEventListener("click", (e) => { if (e.target === trashModal) close
 attachBtn.addEventListener("click", openAssetModal);
 document.getElementById("asset-close").addEventListener("click", closeAssetModal);
 document.getElementById("asset-upload-btn").addEventListener("click", () => attachInput.click());
-document.getElementById("asset-newdir-btn").addEventListener("click", createTargetFolder);
+document.getElementById("asset-newdir-btn").addEventListener("click", createAssetFolder);
 // 點對話框外的遮罩即關閉
 assetModal.addEventListener("click", (e) => {
   if (e.target === assetModal) closeAssetModal();
@@ -83,10 +83,10 @@ docModal.addEventListener("click", (e) => {
   if (e.target === docModal) closeDocPicker();
 });
 docSearch.addEventListener("input", () => renderDocList(docSearch.value));
-// 上傳到所選目的地資料夾（上傳後留在附件庫，點縮圖才插入）
+// 上傳到附件庫目前選取的資料夾（上傳後留在附件庫，點縮圖才插入）
 attachInput.addEventListener("change", async () => {
   if (attachInput.files.length) {
-    await uploadToLibrary(Array.from(attachInput.files), assetTarget.value);
+    await uploadToLibrary(Array.from(attachInput.files));
   }
   attachInput.value = ""; // 清空以便重複選同一檔案
 });

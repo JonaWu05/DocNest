@@ -155,22 +155,25 @@
   <!-- 隱藏的檔案選擇器，供上傳使用 -->
   <input type="file" id="attach-input" class="hidden" multiple>
 
-  <!-- 附件庫對話框：可上傳新檔，或從已上傳的附件中挑選插入 -->
+  <!-- 附件庫對話框：左側 assets 資料夾樹選目前資料夾，右側為該資料夾的直層附件 -->
   <div id="asset-modal" class="modal-overlay hidden">
-    <div class="modal">
+    <div class="modal asset-modal-box">
       <div class="modal-header">
         <span>插入附件</span>
         <button class="icon-btn" id="asset-close" title="關閉"><i class="fa fa-times"></i></button>
       </div>
       <div class="modal-toolbar">
-        <label class="asset-target-label">目的地
-          <select id="asset-target" title="附件會存到 assets 目錄底下所選的資料夾"></select>
-        </label>
-        <button class="icon-btn" id="asset-newdir-btn" title="新增資料夾"><i class="fa fa-folder-o"></i></button>
-        <button class="tool-btn" id="asset-upload-btn"><i class="fa fa-upload"></i> 上傳到此資料夾</button>
+        <span class="asset-current-dir" id="asset-current-dir" title="目前資料夾"></span>
+        <button class="icon-btn" id="asset-newdir-btn" title="在目前資料夾底下新增資料夾"><i class="fa fa-folder-o"></i></button>
+        <button class="tool-btn" id="asset-upload-btn"><i class="fa fa-upload"></i> 上傳到目前資料夾</button>
       </div>
-      <div class="modal-subtoolbar"><span id="asset-hint"></span></div>
-      <div class="asset-grid" id="asset-grid"></div>
+      <div class="asset-body">
+        <div class="asset-folder-tree" id="asset-folder-tree"></div>
+        <div class="asset-main">
+          <div class="modal-subtoolbar"><span id="asset-hint"></span></div>
+          <div class="asset-grid" id="asset-grid"></div>
+        </div>
+      </div>
     </div>
   </div>
 
