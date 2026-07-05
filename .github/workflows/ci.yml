@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一分支的新推送取消尚未跑完的舊工作，節省額度
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 後端：格式、靜態檢查、建置與測試。
+  # 雙平台矩陣：Linux 對應正式部署環境、Windows 對應開發環境。
+  # 檔案系統大小寫敏感度（store.RenameFile 的 os.SameFile 分支）與路徑分隔等
+  # 行為依平台而異，單跑一邊會漏掉另一邊的真實路徑。
+  backend:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # gofmt 只在 Linux 檢查：Windows runner 的換行設定會造成誤報
+      - name: gofmt
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./...
+
+  # 前端：esbuild bundle 檢查（無 JS 測試，以此抓 import 斷鏈與語法錯誤）
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: esbuild bundle check
+        run: npx esbuild web/js/main.js --bundle --outfile=/dev/null

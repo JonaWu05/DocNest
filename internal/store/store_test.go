@@ -215,16 +215,16 @@ func TestValidateRelPath(t *testing.T) {
 // 且產出一律通過 validateName（與驗證共用同一字元集定義）。
 func TestSanitizeName(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"photo.png", "photo.png"},              // 已合法：原樣保留
-		{"螢幕截圖.png", "file.png"},                // 全不合法：fallback
-		{"螢幕擷取 2026-07.png", "2026-07.png"},     // 前段不合法：不留前導 _
-		{"my photo (1).png", "my_photo_1.png"},  // 連續不合法字元壓成一個 _
-		{"...test.png", "test.png"},             // 頭尾多餘的 . 清除
-		{"___.png", "file.png"},                 // 清理後為空：fallback
-		{"a b.tar.gz", "a_b.tar.gz"},            // 多段副檔名：只動主檔名
-		{"報告 v2 final.pdf", "v2_final.pdf"},     // 中英混合
-		{"con.png", "file.png"},                 // Windows 保留裝置名：fallback
-		{"AUX.report.pdf", "file.pdf"},          // 保留名比對第一個點之前的主檔名
+		{"photo.png", "photo.png"},             // 已合法：原樣保留
+		{"螢幕截圖.png", "file.png"},               // 全不合法：fallback
+		{"螢幕擷取 2026-07.png", "2026-07.png"},    // 前段不合法：不留前導 _
+		{"my photo (1).png", "my_photo_1.png"}, // 連續不合法字元壓成一個 _
+		{"...test.png", "test.png"},            // 頭尾多餘的 . 清除
+		{"___.png", "file.png"},                // 清理後為空：fallback
+		{"a b.tar.gz", "a_b.tar.gz"},           // 多段副檔名：只動主檔名
+		{"報告 v2 final.pdf", "v2_final.pdf"},    // 中英混合
+		{"con.png", "file.png"},                // Windows 保留裝置名：fallback
+		{"AUX.report.pdf", "file.pdf"},         // 保留名比對第一個點之前的主檔名
 	}
 	for _, tc := range cases {
 		got := SanitizeName(tc.in, "file")

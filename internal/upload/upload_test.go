@@ -184,7 +184,7 @@ func TestRenameAsset(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "assets", "1719999999999_old-name.png"))
 	mustWrite(t, filepath.Join(root, "assets", "1719999999998_taken.png"))
 	mustWrite(t, filepath.Join(root, "assets", "1719999999998_dup.png")) // 與 taken 同時間戳前綴，供衝突測試
-	mustWrite(t, filepath.Join(root, "assets", "manual.png")) // 手動放入、無時間戳前綴
+	mustWrite(t, filepath.Join(root, "assets", "manual.png"))            // 手動放入、無時間戳前綴
 	mustWrite(t, filepath.Join(root, "notes.md"))
 	u := newTestUpload(t, root, allWrite)
 

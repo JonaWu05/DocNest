@@ -88,12 +88,12 @@ func TestFileVersion(t *testing.T) {
 // TestResolveAssetRel 驗證「相對於來源文件」的連結換算成 DOC_ROOT 相對路徑，與前端規則一致。
 func TestResolveAssetRel(t *testing.T) {
 	cases := []struct{ docRel, src, want string }{
-		{"notes/a.md", "assets/x.png", "notes/assets/x.png"},   // 同層相對
-		{"notes/a.md", "../assets/x.png", "assets/x.png"},      // 上一層
+		{"notes/a.md", "assets/x.png", "notes/assets/x.png"},     // 同層相對
+		{"notes/a.md", "../assets/x.png", "assets/x.png"},        // 上一層
 		{"notes/sub/a.md", "../../assets/x.png", "assets/x.png"}, // 多層上溯
-		{"a.md", "assets/x.png", "assets/x.png"},              // 根目錄文件
-		{"notes/a.md", "./img/x.png", "notes/img/x.png"},      // ./ 當前目錄
-		{"notes/a.md", "../../../x.png", "x.png"},             // 上溯超出根：多餘的 .. 被吃掉
+		{"a.md", "assets/x.png", "assets/x.png"},                 // 根目錄文件
+		{"notes/a.md", "./img/x.png", "notes/img/x.png"},         // ./ 當前目錄
+		{"notes/a.md", "../../../x.png", "x.png"},                // 上溯超出根：多餘的 .. 被吃掉
 	}
 	for _, c := range cases {
 		if got := resolveAssetRel(c.docRel, c.src); got != c.want {

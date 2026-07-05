@@ -17,9 +17,9 @@ import (
 // Watcher 週期性比對開檔的磁碟版本，偵測外部改檔。
 type Watcher struct {
 	interval   time.Duration
-	openPaths  func() []string             // 目前有人開著的檔案（DOC_ROOT 相對路徑）
+	openPaths  func() []string                 // 目前有人開著的檔案（DOC_ROOT 相對路徑）
 	versionOf  func(rel string) (string, bool) // 取得檔案目前版本（size+mtime）；檔案不存在/不可讀時 ok=false
-	onExternal func(rel string)            // 偵測到外部改檔時呼叫（同一 rel 每次變更僅觸發一次）
+	onExternal func(rel string)                // 偵測到外部改檔時呼叫（同一 rel 每次變更僅觸發一次）
 
 	mu    sync.Mutex
 	known map[string]string // rel → 最近一次已知版本（含自寫登記與已回報的外部版本）

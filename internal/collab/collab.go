@@ -2,12 +2,15 @@
 // 中繼 Yjs 二進位 update 與 awareness，並為晚加入者回放既有 update（dumb relay：Go 端不解碼 CRDT）。
 //
 // 訊息格式:每個 WebSocket 二進位 frame 第 1 個位元組為 tag,其後為負載:
-//   'u' 文件 update(Yjs)  'a' awareness(游標等)  's' 完整狀態快照(saver→伺服器)  'c' 控制訊息(JSON)
+//
+//	'u' 文件 update(Yjs)  'a' awareness(游標等)  's' 完整狀態快照(saver→伺服器)  'c' 控制訊息(JSON)
+//
 // 控制訊息僅由伺服器送出(init / role / stream / compact)。落地 .md 由被指派為 saver 的客戶端走既有 POST /api/file。
 //
 // 兩個負載最佳化(M2):
-//   A. log 壓縮：log 累積過長時請 saver 送一份完整狀態('s')取代之,使記憶體上限 ≈ 文件大小而非編輯歷史。
-//   B. 單人延後串流：房內僅一人時不需上傳 update(本機累積即可);第二人加入時才通知開始串流並補送完整狀態。
+//
+//	A. log 壓縮：log 累積過長時請 saver 送一份完整狀態('s')取代之,使記憶體上限 ≈ 文件大小而非編輯歷史。
+//	B. 單人延後串流：房內僅一人時不需上傳 update(本機累積即可);第二人加入時才通知開始串流並補送完整狀態。
 package collab
 
 import (
@@ -67,9 +70,9 @@ type client struct {
 	username  string
 	subject   string
 	canWrite  bool
-	streaming bool   // 是否應上傳本地 update（最佳化 B：單人時為 false，本機累積不上傳）
-	yjsID     int64  // 客戶端的 Yjs awareness clientID（經 hello 控制訊息登記）；離線時用於通知他人移除其游標
-	hasYjsID  bool   // 是否已收到 hello（yjsID 有效）
+	streaming bool  // 是否應上傳本地 update（最佳化 B：單人時為 false，本機累積不上傳）
+	yjsID     int64 // 客戶端的 Yjs awareness clientID（經 hello 控制訊息登記）；離線時用於通知他人移除其游標
+	hasYjsID  bool  // 是否已收到 hello（yjsID 有效）
 	room      *room
 }
 

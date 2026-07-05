@@ -27,6 +27,7 @@ export async function setShowIndexFiles(show) {
 }
 
 function displayNameOf(node) {
+  if (node.isIndex) return node.name;
   if (node.title) return node.title;
   if (!node.isDir) return node.name.replace(/\.[^.]+$/, "");
   return node.name;

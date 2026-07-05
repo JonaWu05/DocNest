@@ -1,5 +1,7 @@
 # Markdown 協作編輯器
 
+[![CI](https://github.com/JonaWu05/DocNest/actions/workflows/ci.yml/badge.svg)](https://github.com/JonaWu05/DocNest/actions/workflows/ci.yml)
+
 以 Go 為後端、原生 JavaScript（ES 模組）為前端的自架 Markdown 文件系統，支援即時多人協作、線上狀態、儲存衝突偵測與權限登入。
 
 ## 功能

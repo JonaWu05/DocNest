@@ -33,10 +33,10 @@ func TestExternalChangeFires(t *testing.T) {
 		func(string) (string, bool) { return ver, true },
 		func(rel string) { fired = append(fired, rel) },
 	)
-	w.tick()       // 建立基準 v1
-	ver = "v2"     // 外部改寫
-	w.tick()       // 應觸發
-	w.tick()       // 版本未再變，不應重複觸發
+	w.tick()   // 建立基準 v1
+	ver = "v2" // 外部改寫
+	w.tick()   // 應觸發
+	w.tick()   // 版本未再變，不應重複觸發
 	if len(fired) != 1 || fired[0] != "a.md" {
 		t.Fatalf("外部改檔應恰好觸發一次，got %v", fired)
 	}
@@ -51,10 +51,10 @@ func TestNoteWriteSuppresses(t *testing.T) {
 		func(string) (string, bool) { return ver, true },
 		func(rel string) { fired = append(fired, rel) },
 	)
-	w.tick()              // 基準 v1
-	ver = "v2"            // 本程式寫入造成版本變動
+	w.tick()                  // 基準 v1
+	ver = "v2"                // 本程式寫入造成版本變動
 	w.NoteWrite("a.md", "v2") // 登記自寫
-	w.tick()              // 版本與登記相同 → 不觸發
+	w.tick()                  // 版本與登記相同 → 不觸發
 	if len(fired) != 0 {
 		t.Fatalf("自寫不應觸發事件，got %v", fired)
 	}
@@ -93,9 +93,9 @@ func TestUnreadableSkipped(t *testing.T) {
 		func(string) (string, bool) { return "v1", ok },
 		func(rel string) { fired = append(fired, rel) },
 	)
-	w.tick()      // 基準 v1
-	ok = false    // 暫時不可讀
-	w.tick()      // 略過
+	w.tick()   // 基準 v1
+	ok = false // 暫時不可讀
+	w.tick()   // 略過
 	if len(fired) != 0 {
 		t.Fatalf("不可讀應略過，got %v", fired)
 	}
