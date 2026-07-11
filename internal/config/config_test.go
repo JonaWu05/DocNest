@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"testing"
 )
 
@@ -19,6 +20,18 @@ func TestParseBoolEnv(t *testing.T) {
 		if parseBoolEnv(key) {
 			t.Errorf("%q 應為 false", v)
 		}
+	}
+}
+
+func TestIsTrustedProxy(t *testing.T) {
+	c := &Config{TrustedProxies: []string{"172.24.15.23", "10.0.0.0/8", "2001:db8::/32"}}
+	for _, raw := range []string{"172.24.15.23", "10.2.3.4", "2001:db8::1"} {
+		if !c.IsTrustedProxy(net.ParseIP(raw)) {
+			t.Errorf("%s should be trusted", raw)
+		}
+	}
+	if c.IsTrustedProxy(net.ParseIP("172.24.15.24")) || c.IsTrustedProxy(nil) {
+		t.Error("unlisted or nil IP must not be trusted")
 	}
 }
 

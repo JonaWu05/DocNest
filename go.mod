@@ -3,7 +3,7 @@ module github.com/JonaWu05/DocNest
 go 1.26
 
 require (
-	github.com/JonaWu05/UniEntry v0.0.0-20260711120805-9ecdb5b6139b
+	github.com/JonaWu05/UniEntry v0.0.0-20260711170655-abb7077bf43a
 	github.com/gin-contrib/cors v1.7.2
 	github.com/gin-contrib/gzip v1.2.6
 	github.com/gin-gonic/gin v1.12.0

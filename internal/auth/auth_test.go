@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
@@ -29,6 +31,15 @@ func newTestAuth(t *testing.T) *Auth {
 		t.Fatal(err)
 	}
 	return New(cfg, accounts, az)
+}
+
+func redirectTarget(t *testing.T, loginURL string) string {
+	t.Helper()
+	u, err := url.Parse(loginURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Query().Get("redirect")
 }
 
 func newPortalTestAuth(t *testing.T) *Auth {
@@ -143,6 +154,60 @@ func TestPortalDoesNotAcceptQueryTokenForAPI(t *testing.T) {
 	a.Middleware()(c)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("portal API query token should be rejected, got %d", w.Code)
+	}
+}
+
+func TestPortalLoginURLTrustedForwardedOrigin(t *testing.T) {
+	a := newPortalTestAuth(t)
+	a.cfg.PortalURL = "https://gcentry.jonawu55.com"
+	a.cfg.TrustedProxies = []string{"172.24.15.23"}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "http://backend:8080/", nil)
+	c.Request.RemoteAddr = "172.24.15.23:43210"
+	c.Request.Header.Set("X-Forwarded-Proto", "https")
+	c.Request.Header.Set("X-Forwarded-Host", "docnest.jonawu55.com")
+
+	if got, want := redirectTarget(t, a.portalLoginURL(c)), "https://docnest.jonawu55.com/"; got != want {
+		t.Fatalf("redirect target = %q, want %q", got, want)
+	}
+}
+
+func TestPortalLoginURLFallsBackToRequestOrigin(t *testing.T) {
+	a := newPortalTestAuth(t)
+	for _, tc := range []struct {
+		name, requestURL, want string
+		tls                    bool
+	}{
+		{"plain HTTP", "http://docnest.internal:8080/notes?a=1", "http://docnest.internal:8080/notes?a=1", false},
+		{"direct TLS", "https://docnest.jonawu55.com/", "https://docnest.jonawu55.com/", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, tc.requestURL, nil)
+			if tc.tls {
+				c.Request.TLS = &tls.ConnectionState{}
+			}
+			if got := redirectTarget(t, a.portalLoginURL(c)); got != tc.want {
+				t.Fatalf("redirect target = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPortalLoginURLIgnoresForwardedOriginFromUntrustedPeer(t *testing.T) {
+	a := newPortalTestAuth(t)
+	a.cfg.TrustedProxies = []string{"172.24.15.23"}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "http://docnest.internal:8080/", nil)
+	c.Request.RemoteAddr = "203.0.113.50:54321"
+	c.Request.Header.Set("X-Forwarded-Proto", "https")
+	c.Request.Header.Set("X-Forwarded-Host", "attacker.example")
+
+	if got, want := redirectTarget(t, a.portalLoginURL(c)), "http://docnest.internal:8080/"; got != want {
+		t.Fatalf("redirect target = %q, want %q", got, want)
 	}
 }
 

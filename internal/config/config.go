@@ -3,6 +3,7 @@ package config
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -169,6 +170,28 @@ func (c *Config) OriginAllowed(origin string) bool {
 	}
 	for _, o := range c.AllowedOrigins {
 		if o == origin {
+			return true
+		}
+	}
+	return false
+}
+
+// IsTrustedProxy reports whether the direct peer IP is covered by
+// TRUSTED_PROXIES. It intentionally checks the socket peer, not Gin's ClientIP,
+// because ClientIP may already have been replaced by X-Forwarded-For.
+func (c *Config) IsTrustedProxy(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	for _, raw := range c.TrustedProxies {
+		raw = strings.TrimSpace(raw)
+		if trustedIP := net.ParseIP(raw); trustedIP != nil {
+			if trustedIP.Equal(ip) {
+				return true
+			}
+			continue
+		}
+		if _, network, err := net.ParseCIDR(raw); err == nil && network.Contains(ip) {
 			return true
 		}
 	}

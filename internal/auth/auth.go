@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -245,16 +246,47 @@ func (a *Auth) PortalPageGate() gin.HandlerFunc {
 	}
 }
 
-// portalLoginURL 組出 Portal 登入頁網址；redirect 帶本站根的絕對網址
+// portalLoginURL 組出 Portal 登入頁網址；redirect 帶目前頁面的絕對網址。
 // （Portal 只接受站內相對路徑或 apps.yaml 已登記的絕對網址）。
-// scheme 由請求本身推斷：反向代理終止 TLS 的部署以內網直連為前提，不處理 X-Forwarded-Proto。
+// 只有直接來源命中 TRUSTED_PROXIES 時才採信 X-Forwarded-Proto/Host；
+// 否則使用後端連線本身的 TLS 與 Request.Host，避免 client 偽造 public URL。
 func (a *Auth) portalLoginURL(c *gin.Context) string {
 	scheme := "http"
 	if c.Request.TLS != nil {
 		scheme = "https"
 	}
-	self := scheme + "://" + c.Request.Host + c.Request.URL.RequestURI()
+	host := c.Request.Host
+	if a.cfg.IsTrustedProxy(directPeerIP(c.Request.RemoteAddr)) {
+		if forwardedProto := firstForwardedValue(c.GetHeader("X-Forwarded-Proto")); forwardedProto == "http" || forwardedProto == "https" {
+			scheme = forwardedProto
+		}
+		if forwardedHost := firstForwardedValue(c.GetHeader("X-Forwarded-Host")); validForwardedHost(forwardedHost) {
+			host = forwardedHost
+		}
+	}
+	self := scheme + "://" + host + c.Request.URL.RequestURI()
 	return a.cfg.PortalURL + "/login?redirect=" + url.QueryEscape(self)
+}
+
+func directPeerIP(remoteAddr string) net.IP {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	return net.ParseIP(strings.Trim(host, "[]"))
+}
+
+func firstForwardedValue(value string) string {
+	value, _, _ = strings.Cut(value, ",")
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func validForwardedHost(host string) bool {
+	if host == "" || strings.ContainsAny(host, "/\\?# \t\r\n") {
+		return false
+	}
+	u, err := url.Parse("http://" + host)
+	return err == nil && u.Host == host && u.Hostname() != ""
 }
 
 // setAuthCookie 種下頁面守門用的認證 cookie（內容為 JWT）。
