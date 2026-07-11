@@ -45,3 +45,20 @@ func TestOriginAllowed(t *testing.T) {
 		t.Error("清單外來源應拒絕")
 	}
 }
+
+func TestParseAuthMode(t *testing.T) {
+	mode, portalURL, err := parseAuthMode("", "http://ignored")
+	if err != nil || mode != AuthModeStandalone || portalURL != "" {
+		t.Fatalf("default mode = %q %q %v", mode, portalURL, err)
+	}
+	mode, portalURL, err = parseAuthMode(" PORTAL ", " http://portal:8081/ ")
+	if err != nil || mode != AuthModePortal || portalURL != "http://portal:8081" {
+		t.Fatalf("portal mode = %q %q %v", mode, portalURL, err)
+	}
+	if _, _, err := parseAuthMode("portal", ""); err == nil {
+		t.Fatal("portal without PORTAL_URL must fail")
+	}
+	if _, _, err := parseAuthMode("typo", "http://portal"); err == nil {
+		t.Fatal("unknown AUTH_MODE must fail")
+	}
+}

@@ -1,6 +1,6 @@
 // 登入流程與登入頁／主介面切換。
 import { API_BASE, state } from "./state.js";
-import { getToken, setToken, clearToken, authFetch, ensureOk } from "./auth.js";
+import { getToken, setToken, clearToken, authFetch, ensureOk, isPortal, portalURL } from "./auth.js";
 import { disconnectWS } from "./ws.js";
 
 // 進入主介面時要執行的初始化（由 main.js 注入，例如載入檔案樹）
@@ -85,7 +85,7 @@ async function enterAppWithMe() {
     state.canWriteRoot = me.can_write_root !== false;
     state.isAdmin = me.is_admin === true;
     adminLink.classList.toggle("hidden", !state.isAdmin);              // 僅管理員可見「管理」入口
-    changePwBtn.classList.toggle("hidden", me.login_type !== "local"); // 僅本地帳號可改密碼
+    changePwBtn.classList.toggle("hidden", isPortal || me.login_type !== "local"); // Portal 帳號由 UniEntry 管理
     showApp();
     onEnterApp(me.default_doc); // 把首頁文件設定一併交給主介面初始化
   } catch (e) {
@@ -100,6 +100,10 @@ async function logout() {
   // 清除頁面守門用的 HttpOnly cookie（前端 JS 無法自行刪除，需伺服器清）；失敗不阻斷登出。
   try { await authFetch(API_BASE + "/api/logout", { method: "POST" }); } catch (e) { /* 忽略 */ }
   clearToken();
+  if (isPortal) {
+    window.location.href = portalURL || "/";
+    return;
+  }
   showLogin();
 }
 
@@ -171,6 +175,11 @@ export function initSession() {
   pwNew.addEventListener("keydown", (e) => { if (e.key === "Enter") doChangePassword(); });
   // 任何受保護請求遇 401：自動登出回登入頁
   window.addEventListener("auth:unauthorized", logout);
+  if (isPortal) {
+    clearToken(); // 移除過往 standalone 殘留；Portal JWT 僅存在 HttpOnly cookie。
+    enterAppWithMe();
+    return;
+  }
 
   // 1) 先檢查 URL fragment 是否帶 token（Discord callback 導回時）
   const m = window.location.hash.match(/(?:^|[#&])token=([^&]+)/);

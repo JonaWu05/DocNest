@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	entryauth "github.com/JonaWu05/UniEntry/entryauth"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -28,11 +29,6 @@ const (
 	loginWindow      = 15 * time.Minute
 )
 
-// authCookieName 為頁面層級守門用的認證 cookie 名稱。
-// 內容即 JWT，僅用於伺服器端判斷「載入 GET 頁面（如 /admin）」時的身分；
-// API 仍走 Authorization: Bearer。cookie 為 HttpOnly + SameSite=Lax，不授權任何寫入 → 免 CSRF。
-const authCookieName = "auth_token"
-
 type loginAttempt struct {
 	failures int
 	resetAt  time.Time
@@ -42,9 +38,10 @@ type loginAttempt struct {
 // Subject（local:<帳號> / discord:<ID>）與顯示用的 Username 分離，因為 Discord 顯示名稱
 // 可被使用者更改、也可能與本地帳號撞名，不適合當權限對應的 key。
 type Claims struct {
-	Username  string `json:"username"`
-	LoginType string `json:"login_type"`
-	Subject   string `json:"sub"`
+	Username       string              `json:"username"`
+	LoginType      string              `json:"login_type"`
+	Subject        string              `json:"sub"`
+	AppPermissions map[string][]string `json:"app_permissions,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -63,6 +60,8 @@ type Auth struct {
 func New(cfg *config.Config, accounts *Accounts, az *authz.Authz) *Auth {
 	return &Auth{cfg: cfg, az: az, accounts: accounts, loginAttempts: map[string]*loginAttempt{}}
 }
+
+func (a *Auth) IsPortal() bool { return a.cfg.AuthMode == config.AuthModePortal }
 
 // ===== JWT =====
 
@@ -84,10 +83,25 @@ func (a *Auth) SignJWT(username, loginType, subject string) (string, error) {
 
 // ParseJWT 驗證 token 的簽章與有效期，並回傳解析後的 Claims。
 func (a *Auth) ParseJWT(tokenStr string) (*Claims, error) {
+	if a.cfg.AuthMode == config.AuthModePortal {
+		// entryauth 9ecdb5b accepts every HMAC variant although UniEntry signs
+		// HS256. Enforce the documented contract at the service boundary too.
+		if token, _, err := new(jwt.Parser).ParseUnverified(tokenStr, &entryauth.Claims{}); err != nil || token.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+			return nil, errors.New("非預期的簽章方法")
+		}
+		claims, err := entryauth.ParseJWT(a.cfg.JWTSecret, tokenStr)
+		if err != nil {
+			return nil, err
+		}
+		return &Claims{
+			Username: claims.Username, LoginType: claims.LoginType, Subject: entryauth.SubjectFromClaims(claims),
+			AppPermissions:   claims.AppPermissions,
+			RegisteredClaims: claims.RegisteredClaims,
+		}, nil
+	}
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
-		// 僅接受 HMAC 簽章，防止 alg=none 之類的攻擊
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+		if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
 			return nil, errors.New("非預期的簽章方法")
 		}
 		return a.cfg.JWTSecret, nil
@@ -101,13 +115,46 @@ func (a *Auth) ParseJWT(tokenStr string) (*Claims, error) {
 	return claims, nil
 }
 
-// ExtractToken 從請求取出 JWT：優先讀 Authorization: Bearer，其次讀 query 參數 ?token=。
-func (a *Auth) ExtractToken(c *gin.Context) string {
+// TokenSource 標記 token 的取得來源。CSRF 防護需要這個區分：cookie 由瀏覽器自動附帶、
+// 可能被跨站請求利用；Bearer 與 query 為呼叫端明確給值，不受 CSRF 影響。
+type TokenSource string
+
+const (
+	SourceNone   TokenSource = ""
+	SourceBearer TokenSource = "bearer"
+	SourceQuery  TokenSource = "query"
+	SourceCookie TokenSource = "cookie"
+)
+
+// ExtractToken 依認證模式從請求取出 JWT 與其來源：
+//   - standalone：Authorization: Bearer → ?token=。cookie 不作為 API 授權來源（免 CSRF 前提）。
+//   - portal：Authorization: Bearer → auth_token cookie，與 entryauth.ExtractToken 一致。
+func (a *Auth) ExtractToken(c *gin.Context) (string, TokenSource) {
+	if a.cfg.AuthMode == config.AuthModePortal {
+		if t := bearerToken(c); t != "" {
+			return t, SourceBearer
+		}
+		if t, err := c.Cookie(entryauth.CookieName); err == nil && t != "" {
+			return t, SourceCookie
+		}
+		return "", SourceNone
+	}
+	if t := bearerToken(c); t != "" {
+		return t, SourceBearer
+	}
+	if t := c.Query("token"); t != "" {
+		return t, SourceQuery
+	}
+	return "", SourceNone
+}
+
+// bearerToken 取出 Authorization: Bearer 標頭中的 token；無則回空字串。
+func bearerToken(c *gin.Context) string {
 	const prefix = "Bearer "
 	if h := c.GetHeader("Authorization"); strings.HasPrefix(h, prefix) {
 		return strings.TrimSpace(h[len(prefix):])
 	}
-	return c.Query("token")
+	return ""
 }
 
 // SubjectFromClaims 取出穩定身分鍵；舊 token 無 sub 時退而以 login_type:username 推導。
@@ -118,10 +165,11 @@ func SubjectFromClaims(claims *Claims) string {
 	return claims.LoginType + ":" + claims.Username
 }
 
-// Middleware 為 JWT 驗證中介層：驗證通過時把 username/login_type/subject 存入 context。
+// Middleware 為 JWT 驗證中介層：驗證通過時把 username/login_type/subject 與
+// token 來源（auth_source，供 RequireWriteHeader 的 CSRF 判斷）存入 context。
 func (a *Auth) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tokenStr := a.ExtractToken(c)
+		tokenStr, source := a.ExtractToken(c)
 		if tokenStr == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "缺少認證 token"})
 			return
@@ -134,21 +182,92 @@ func (a *Auth) Middleware() gin.HandlerFunc {
 		c.Set("username", claims.Username)
 		c.Set("login_type", claims.LoginType)
 		c.Set("subject", SubjectFromClaims(claims))
+		c.Set("auth_source", string(source))
+		if a.cfg.AuthMode == config.AuthModePortal {
+			c.Set("portal_auth", true)
+			c.Set("app_permissions", append([]string(nil), claims.AppPermissions[authz.PortalAppID]...))
+		}
 		c.Next()
 	}
+}
+
+// RequireWriteHeader 為 portal 模式的 CSRF 防線，需掛在 Middleware 之後（依賴 auth_source）：
+// cookie 授權的寫入請求（POST/PUT/PATCH/DELETE）必須帶自訂標頭 X-Requested-With
+// （跨站表單與跨站 fetch 無法設自訂標頭），或由瀏覽器標記為同源請求
+// （Sec-Fetch-Site: same-origin，涵蓋無法自訂標頭的 sendBeacon）。
+// Bearer 與 ?token= 授權的請求不依賴瀏覽器自動附帶的憑證，不受 CSRF 影響，一律放行。
+func RequireWriteHeader() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		default:
+			c.Next()
+			return
+		}
+		if TokenSource(c.GetString("auth_source")) != SourceCookie {
+			c.Next()
+			return
+		}
+		if c.GetHeader("X-Requested-With") != "" || c.GetHeader("Sec-Fetch-Site") == "same-origin" {
+			c.Next()
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "缺少 X-Requested-With 標頭（CSRF 防護）"})
+	}
+}
+
+// AuthenticateWS 驗證 WebSocket 升級請求的身分：
+//   - standalone：僅接受 ?token=（瀏覽器無法為 WS 設 Authorization 標頭；cookie 不授權）。
+//   - portal：?token= → auth_token cookie（同 host 的升級請求會自動帶 cookie）。
+func (a *Auth) AuthenticateWS(c *gin.Context) (*Claims, error) {
+	tokenStr := c.Query("token")
+	if tokenStr == "" && a.cfg.AuthMode == config.AuthModePortal {
+		tokenStr, _ = c.Cookie(entryauth.CookieName)
+	}
+	if tokenStr == "" {
+		return nil, errors.New("缺少 token")
+	}
+	return a.ParseJWT(tokenStr)
+}
+
+// PortalPageGate 為 portal 模式的頁面守門（GET / 等 HTML 頁）：
+// 無有效認證 cookie 時 302 至 Portal 登入頁，登入後由 Portal 依 redirect 參數導回本站。
+func (a *Auth) PortalPageGate() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if tok, err := c.Cookie(entryauth.CookieName); err == nil {
+			if _, err := a.ParseJWT(tok); err == nil {
+				c.Next()
+				return
+			}
+		}
+		c.Redirect(http.StatusFound, a.portalLoginURL(c))
+		c.Abort()
+	}
+}
+
+// portalLoginURL 組出 Portal 登入頁網址；redirect 帶本站根的絕對網址
+// （Portal 只接受站內相對路徑或 apps.yaml 已登記的絕對網址）。
+// scheme 由請求本身推斷：反向代理終止 TLS 的部署以內網直連為前提，不處理 X-Forwarded-Proto。
+func (a *Auth) portalLoginURL(c *gin.Context) string {
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	self := scheme + "://" + c.Request.Host + c.Request.URL.RequestURI()
+	return a.cfg.PortalURL + "/login?redirect=" + url.QueryEscape(self)
 }
 
 // setAuthCookie 種下頁面守門用的認證 cookie（內容為 JWT）。
 // SameSite=Lax：同站導覽與直接開網址/書籤的 top-level GET 會帶上（守門可用），跨站非 GET 不帶（免 CSRF）。
 func (a *Auth) setAuthCookie(c *gin.Context, token string) {
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(authCookieName, token, int(a.cfg.JWTExpire.Seconds()), "/", "", a.cfg.CookieSecure, true)
+	c.SetCookie(entryauth.CookieName, token, int(a.cfg.JWTExpire.Seconds()), "/", "", a.cfg.CookieSecure, true)
 }
 
 // clearAuthCookie 清除認證 cookie（登出時呼叫；HttpOnly cookie 前端 JS 無法自行刪除）。
 func (a *Auth) clearAuthCookie(c *gin.Context) {
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(authCookieName, "", -1, "/", "", a.cfg.CookieSecure, true)
+	c.SetCookie(entryauth.CookieName, "", -1, "/", "", a.cfg.CookieSecure, true)
 }
 
 // LogoutHandler 處理 POST /api/logout：清除認證 cookie。前端另需自行清掉 localStorage 的 token。
@@ -162,7 +281,7 @@ func (a *Auth) LogoutHandler(c *gin.Context) {
 // 使非管理員連頁面骨架都拿不到。真正的資料防線仍在各 API endpoint。
 func (a *Auth) RequireAdminPage() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		tok, err := c.Cookie(authCookieName)
+		tok, err := c.Cookie(entryauth.CookieName)
 		if err != nil {
 			c.Redirect(http.StatusFound, "/")
 			c.Abort()
@@ -273,14 +392,32 @@ func (a *Auth) LoginHandler(c *gin.Context) {
 // MeHandler 處理 GET /api/me：回傳登入者資訊與權限摘要。
 func (a *Auth) MeHandler(c *gin.Context) {
 	subject := authz.SubjectOf(c)
+	hasAccess := a.az.HasAnyRead(subject)
+	canWriteRoot := a.az.Can(subject, "", authz.AccessWrite)
+	isAdmin := a.az.IsAdmin(subject)
+	if c.GetBool("portal_auth") {
+		permissions := authz.PortalPermissionsOf(c)
+		hasAccess = authz.CanPortal(permissions, "", authz.AccessRead)
+		if !hasAccess {
+			for _, permission := range permissions {
+				if strings.HasPrefix(permission, authz.PermissionPagesRead+":") || strings.HasPrefix(permission, authz.PermissionPagesWrite+":") {
+					hasAccess = true
+					break
+				}
+			}
+		}
+		canWriteRoot = authz.CanPortal(permissions, "", authz.AccessWrite)
+		isAdmin = false // portal mode has no local account/group administration page
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"username":    c.GetString("username"),
 		"login_type":  c.GetString("login_type"),
 		"default_doc": a.cfg.DefaultDoc,
+		"auth_mode":   a.cfg.AuthMode, // 前端據此切換登入/登出/改密碼等 UI（portal 模式帳號管理在 Portal）
 		// 權限摘要：前端據此顯示歡迎頁、隱藏無權限的操作（伺服器端仍為真正防線）
-		"has_access":     a.az.HasAnyRead(subject),
-		"can_write_root": a.az.Can(subject, "", authz.AccessWrite),
-		"is_admin":       a.az.IsAdmin(subject),
+		"has_access":     hasAccess,
+		"can_write_root": canWriteRoot,
+		"is_admin":       isAdmin,
 	})
 }
 

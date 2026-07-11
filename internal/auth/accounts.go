@@ -52,6 +52,12 @@ type Accounts struct {
 	path string // 設定檔來源路徑（供變動時 read-modify-write）
 }
 
+// NewEmptyAccounts is used by portal mode, where UniEntry owns all accounts.
+// It intentionally performs no local file access.
+func NewEmptyAccounts() *Accounts {
+	return &Accounts{snap: &accountsSnapshot{users: map[string]string{}, discordAllowed: map[string]string{}}}
+}
+
 // LoadAccounts 從設定檔建立 Accounts。
 // 檔案不存在時以「空帳號」啟動並警告（無人可用本地登入、Discord 一律拒絕）；
 // 待管理員放入 accounts.json 後由 Reload 即時生效。存在但解析失敗則回傳錯誤。

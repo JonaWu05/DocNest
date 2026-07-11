@@ -379,7 +379,9 @@ export async function connectCollab(path, cm, opts) {
 // 重連後伺服器重新送 init,由 handleControl 把離線期間的本地編輯推回(見上)。
 function openSocket(s) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const url = `${proto}://${location.host}/ws/collab?path=${encodeURIComponent(s.path)}&token=${encodeURIComponent(getToken())}`;
+  const token = getToken();
+  const tokenPart = token ? `&token=${encodeURIComponent(token)}` : "";
+  const url = `${proto}://${location.host}/ws/collab?path=${encodeURIComponent(s.path)}${tokenPart}`;
   const ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
   s.ws = ws;
@@ -410,7 +412,9 @@ function scheduleReconnect(s) {
 function flushBeacon() {
   if (!session || !session.isSaver || !session.pendingSave) return;
   if (session.externalChanged) return; // 外部改檔待決:不在關閉時靜默覆蓋磁碟
-  const url = `${API_BASE}/api/file?path=${encodeURIComponent(session.path)}&token=${encodeURIComponent(getToken())}&force=1`;
+  const token = getToken();
+  const tokenPart = token ? `&token=${encodeURIComponent(token)}` : "";
+  const url = `${API_BASE}/api/file?path=${encodeURIComponent(session.path)}${tokenPart}&force=1`;
   navigator.sendBeacon(url, new Blob([session.text.toString()], { type: "text/plain; charset=utf-8" }));
   session.pendingSave = false;
 }

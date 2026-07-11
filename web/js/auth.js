@@ -2,14 +2,19 @@
 import { API_BASE } from "./state.js";
 
 const TOKEN_KEY = "auth_token";
+const authMode = document.querySelector('meta[name="docnest-auth-mode"]')?.content || "standalone";
+export const isPortal = authMode === "portal";
+export const portalURL = document.querySelector('meta[name="docnest-portal-url"]')?.content || "";
 
 // getToken / setToken / clearToken 讀寫 / 清除 token。改用 localStorage：token 會保留到
 // JWT 過期（JWT_EXPIRE_HOURS）或登出為止，關閉瀏覽器後重開不需重新登入
 // （sessionStorage 則會在關閉分頁時清除）。
 export function getToken() {
+  if (isPortal) return null;
   return localStorage.getItem(TOKEN_KEY);
 }
 export function setToken(t) {
+  if (isPortal) return;
   localStorage.setItem(TOKEN_KEY, t);
 }
 export function clearToken() {
@@ -22,8 +27,12 @@ export async function authFetch(input, init = {}) {
   const token = getToken();
   const headers = new Headers(init.headers || {});
   if (token) headers.set("Authorization", "Bearer " + token);
+  const method = (init.method || "GET").toUpperCase();
+  if (isPortal && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    headers.set("X-Requested-With", "DocNest");
+  }
 
-  const res = await fetch(input, { ...init, headers });
+  const res = await fetch(input, { credentials: "same-origin", ...init, headers });
   if (res.status === 401) {
     clearToken();
     window.dispatchEvent(new CustomEvent("auth:unauthorized"));

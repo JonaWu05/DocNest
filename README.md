@@ -102,4 +102,22 @@ go run .
 
 
 
+## UniEntry 模式
+
+DocNest 預設維持獨立的 `standalone` 認證。內網部署可改由 UniEntry 集中登入與授權：
+
+```env
+AUTH_MODE=portal
+PORTAL_URL=http://172.24.15.21:8081
+JWT_SECRET=<與 UniEntry 相同>
+```
+
+Portal 模式不讀取 `accounts.json` 或 `permissions.json`，也不提供本地帳號、Discord、密碼及群組管理 API。DocNest 只驗證 UniEntry JWT，並讀取 `app_permissions["docnest"]`：
+
+- `pages.read` / `pages.write`：整個文件根目錄。
+- `pages.read:<路徑前綴>` / `pages.write:<路徑前綴>`：指定路徑及其後代。
+- `pages.write` 隱含讀取；未知、格式錯誤或缺少的權限一律拒絕。
+
+請同時在 UniEntry `apps.yaml` 登記 DocNest 的完整網址，並讓瀏覽器以相同 host（可不同 port）存取兩個服務，才能共享 host-only 的 `auth_token` cookie。權限異動後，既有 JWT 需重新登入或等待到期才會取得新 claims。
+
 [MIT License](LICENSE) 

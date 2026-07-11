@@ -90,7 +90,6 @@ func (f *Files) readTrashMeta(id string) (trashMeta, error) {
 
 // ListTrash 處理 GET /api/trash：列出使用者對其「原始路徑」有寫入權的回收項目（與權限一致，避免名稱外洩）。
 func (f *Files) ListTrash(c *gin.Context) {
-	subject := authz.SubjectOf(c)
 	entries, err := os.ReadDir(f.trashDir())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -110,7 +109,7 @@ func (f *Files) ListTrash(c *gin.Context) {
 		if err != nil {
 			continue
 		}
-		if !f.az.Can(subject, m.Original, authz.AccessWrite) {
+		if !f.az.CanContext(c, m.Original, authz.AccessWrite) {
 			continue
 		}
 		items = append(items, TrashItem{

@@ -1,5 +1,5 @@
 // WebSocket 連線管理：建立連線、斷線自動重連、收送統一格式訊息。
-import { getToken, authFetch } from "./auth.js";
+import { getToken, authFetch, isPortal } from "./auth.js";
 import { API_BASE } from "./state.js";
 
 let socket = null;
@@ -29,11 +29,12 @@ function hideReconnecting() {
 // 建立 WebSocket 連線（token 以 query 夾帶，因 WS 無法自訂標頭）
 export function connectWS() {
   const token = getToken();
-  if (!token) return;
+  if (!token && !isPortal) return;
   intentionalClose = false;
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  socket = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`);
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  socket = new WebSocket(`${proto}://${location.host}/ws${query}`);
 
   socket.addEventListener("open", () => {
     hideReconnecting();
@@ -73,13 +74,13 @@ function scheduleReconnect() {
 //   - 網路錯誤（token 還在）：稍後再以更長的退避重試
 async function attemptReconnect() {
   reconnectTimer = null;
-  if (intentionalClose || !getToken()) return;
+  if (intentionalClose || (!isPortal && !getToken())) return;
   try {
     const res = await authFetch(API_BASE + "/api/me");
     if (res.ok) connectWS();
     else scheduleReconnect(); // 非 401 的伺服器錯誤，稍後再試
   } catch (e) {
-    if (getToken()) scheduleReconnect(); // token 還在 → 純網路錯誤，繼續退避重試
+    if (isPortal || getToken()) scheduleReconnect(); // Portal cookie 或 standalone token 還在
     // token 已被 authFetch 因 401 清除 → 不再重連（登出流程已啟動）
   }
 }

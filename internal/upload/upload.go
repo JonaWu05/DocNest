@@ -143,7 +143,6 @@ func (u *Upload) ListAssets(c *gin.Context) {
 		return
 	}
 
-	subject := authz.SubjectOf(c)
 	entries, err := u.store.ScanAssets()
 	if err != nil {
 		httpx.ServerError(c, "讀取附件失敗", err)
@@ -158,7 +157,7 @@ func (u *Upload) ListAssets(c *gin.Context) {
 			continue
 		}
 		// 權限過濾：只列出使用者有讀取權的附件
-		if !u.az.Can(subject, e.Path, authz.AccessRead) {
+		if !u.az.CanContext(c, e.Path, authz.AccessRead) {
 			continue
 		}
 		items = append(items, AssetItem{
@@ -181,7 +180,6 @@ func (u *Upload) ListAssets(c *gin.Context) {
 // 可見規則比照主檔案樹 filterTree：自身可讀或可寫的資料夾保留；
 // 另讓可見項目（含可讀檔案）的祖先資料夾穿透保留，使用者才能逐層導覽。
 func (u *Upload) ListAssetFolders(c *gin.Context) {
-	subject := authz.SubjectOf(c)
 	entries, err := u.store.ScanAssets()
 	if err != nil {
 		httpx.ServerError(c, "讀取附件資料夾失敗", err)
@@ -189,7 +187,7 @@ func (u *Upload) ListAssetFolders(c *gin.Context) {
 	}
 
 	visible := map[string]bool{}
-	if u.az.Can(subject, "assets", authz.AccessRead) || u.az.Can(subject, "assets", authz.AccessWrite) {
+	if u.az.CanContext(c, "assets", authz.AccessRead) || u.az.CanContext(c, "assets", authz.AccessWrite) {
 		visible["assets"] = true
 	}
 	// addWithAncestors 將資料夾與其所有上層（直到 assets 根）標記為可見
@@ -201,8 +199,8 @@ func (u *Upload) ListAssetFolders(c *gin.Context) {
 		visible["assets"] = true
 	}
 	for _, e := range entries {
-		canSee := u.az.Can(subject, e.Path, authz.AccessRead) ||
-			(e.IsDir && u.az.Can(subject, e.Path, authz.AccessWrite))
+		canSee := u.az.CanContext(c, e.Path, authz.AccessRead) ||
+			(e.IsDir && u.az.CanContext(c, e.Path, authz.AccessWrite))
 		if !canSee {
 			continue
 		}
@@ -217,7 +215,7 @@ func (u *Upload) ListAssetFolders(c *gin.Context) {
 	for p := range visible {
 		folders = append(folders, AssetFolder{
 			Path:     p,
-			Writable: u.az.Can(subject, p, authz.AccessWrite),
+			Writable: u.az.CanContext(c, p, authz.AccessWrite),
 		})
 	}
 	sort.Slice(folders, func(i, j int) bool { return folders[i].Path < folders[j].Path })

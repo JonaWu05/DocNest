@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +19,13 @@ var discordEndpoint = oauth2.Endpoint{
 	TokenURL: "https://discord.com/api/oauth2/token",
 }
 
+// 認證模式：standalone 為自簽 JWT 與本地帳號（預設）；portal 為接入 UniEntry 登入中心，
+// 本服務只驗證不簽發，登入頁與帳號管理都在 Portal。
+const (
+	AuthModeStandalone = "standalone"
+	AuthModePortal     = "portal"
+)
+
 // Config 保存全部設定。由 Load() 一次建立並注入各服務，取代原本散落的 package 級全域變數。
 type Config struct {
 	DocRoot         string   // 文件根目錄（絕對路徑）
@@ -30,10 +38,13 @@ type Config struct {
 	TrustedProxies  []string // 信任的反向代理（IP/CIDR）
 	AllowedOrigins  []string // CORS / WebSocket 允許來源；空＝開發模式全放行
 
-	JWTSecret  []byte         // 簽發 / 驗證 JWT 用的密鑰
+	JWTSecret  []byte         // 簽發 / 驗證 JWT 用的密鑰（portal 模式須與 Portal 同一組，程式無法代為驗證）
 	JWTExpire  time.Duration  // JWT 有效期間
 	Discord    *oauth2.Config // Discord OAuth 設定（nil 代表停用）
 	DefaultDoc string         // 登入後自動開啟的首頁文件（相對 DOC_ROOT）
+
+	AuthMode  string // 認證模式：AuthModeStandalone / AuthModePortal
+	PortalURL string // portal 模式的 UniEntry 網址（無尾斜線）；standalone 模式為空
 
 	// FsyncOnSave：存檔時是否 fsync 強制刷盤。預設關（多數檔案型應用的做法）。
 	// 關閉不影響原子性（仍靠 temp+rename，讀者不會讀到半檔），僅放棄「斷電當下那一存」的耐久保證。
@@ -83,6 +94,14 @@ func Load() *Config {
 	c.JWTExpire = time.Duration(hours) * time.Hour
 
 	c.DefaultDoc = strings.TrimSpace(os.Getenv("DEFAULT_DOC"))
+
+	// 認證模式：未設定即 standalone（向後相容）；portal 模式必須同時給 PORTAL_URL
+	mode, portalURL, err := parseAuthMode(os.Getenv("AUTH_MODE"), os.Getenv("PORTAL_URL"))
+	if err != nil {
+		panic(err.Error())
+	}
+	c.AuthMode = mode
+	c.PortalURL = portalURL
 
 	// Discord OAuth（選填）：三個必要欄位都齊全才啟用
 	cid := os.Getenv("DISCORD_CLIENT_ID")
@@ -154,6 +173,25 @@ func (c *Config) OriginAllowed(origin string) bool {
 		}
 	}
 	return false
+}
+
+// parseAuthMode 解析 AUTH_MODE 與 PORTAL_URL：
+//   - 空值 / standalone → standalone（PORTAL_URL 忽略）
+//   - portal → PORTAL_URL 必填，去除尾斜線後回傳
+//   - 其他值 → 錯誤（避免打錯字時靜默退回 standalone、放行未預期的存取模型）
+func parseAuthMode(mode, portalURL string) (string, string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", AuthModeStandalone:
+		return AuthModeStandalone, "", nil
+	case AuthModePortal:
+		u := strings.TrimRight(strings.TrimSpace(portalURL), "/")
+		if u == "" {
+			return "", "", errors.New("AUTH_MODE=portal 時必須設定 PORTAL_URL（UniEntry 的網址，如 http://172.24.15.21:8081）")
+		}
+		return AuthModePortal, u, nil
+	default:
+		return "", "", errors.New("AUTH_MODE 僅接受 standalone 或 portal，得到：" + mode)
+	}
 }
 
 // parseBoolEnv 解析布林環境變數：1/true/yes/on（不分大小寫）視為 true，其餘（含未設定）為 false。

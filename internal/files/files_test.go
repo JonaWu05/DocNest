@@ -1,6 +1,7 @@
 package files
 
 import (
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/JonaWu05/DocNest/internal/authz"
 	"github.com/JonaWu05/DocNest/internal/store"
+	"github.com/gin-gonic/gin"
 )
 
 // TestFilterTree 驗證檔案樹依讀取權過濾、並正確標記 writable。
@@ -36,7 +38,9 @@ func TestFilterTree(t *testing.T) {
 		}},
 	}
 
-	out := f.filterTree(nodes, "local:alice")
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("subject", "local:alice")
+	out := f.filterTree(nodes, c)
 
 	// alice：welcome 可讀（everyone，唯讀）、teamA 可寫、secret 完全看不到
 	got := map[string]bool{} // path -> writable
@@ -54,7 +58,9 @@ func TestFilterTree(t *testing.T) {
 	}
 
 	// 未分組者：只剩 welcome.md（透過 "*"）
-	out2 := f.filterTree(cloneNodes(nodes), "local:nobody")
+	c2, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c2.Set("subject", "local:nobody")
+	out2 := f.filterTree(cloneNodes(nodes), c2)
 	if len(out2) != 1 || out2[0].Path != "welcome.md" {
 		t.Errorf("未分組者應只看到 welcome.md，got %+v", out2)
 	}

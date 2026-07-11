@@ -98,14 +98,21 @@ func main() {
 	// ===== 載入設定並建立各服務（依賴注入）=====
 	cfg := config.Load()
 
-	az, err := authz.Load(cfg.PermissionsFile)
-	if err != nil {
-		panic("載入權限設定檔失敗：" + err.Error())
-	}
-
-	accounts, err := auth.LoadAccounts(cfg.AccountsFile)
-	if err != nil {
-		panic("載入帳號設定檔失敗：" + err.Error())
+	var az *authz.Authz
+	var accounts *auth.Accounts
+	if cfg.AuthMode == config.AuthModePortal {
+		az = authz.NewPortalFallback()
+		accounts = auth.NewEmptyAccounts()
+	} else {
+		var err error
+		az, err = authz.Load(cfg.PermissionsFile)
+		if err != nil {
+			panic("載入權限設定檔失敗：" + err.Error())
+		}
+		accounts, err = auth.LoadAccounts(cfg.AccountsFile)
+		if err != nil {
+			panic("載入帳號設定檔失敗：" + err.Error())
+		}
 	}
 
 	st := store.New(cfg.DocRoot)
@@ -157,13 +164,16 @@ func main() {
 	// CORS：有設定 ALLOWED_ORIGINS 就只允許清單內的來源，否則維持開發模式（全部允許）
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowMethods = []string{"GET", "POST", "DELETE", "OPTIONS"}
-	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "X-File-Version"}
+	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "X-File-Version", "X-Requested-With"}
 	corsConfig.ExposeHeaders = []string{"X-File-Version"}
 	if len(cfg.AllowedOrigins) == 0 {
 		corsConfig.AllowAllOrigins = true
 		slog.Warn("未設定 ALLOWED_ORIGINS：CORS 與 WebSocket 允許所有來源，僅適用於開發環境")
 	} else {
 		corsConfig.AllowOrigins = cfg.AllowedOrigins
+		if cfg.AuthMode == config.AuthModePortal {
+			corsConfig.AllowCredentials = true
+		}
 	}
 	r.Use(cors.New(corsConfig))
 
@@ -210,19 +220,35 @@ func main() {
 			`#login-view{background:url(%q) center / cover no-repeat !important;}`, cfg.LoginBg))
 	}
 	indexHandler := func(c *gin.Context) {
-		c.HTML(http.StatusOK, "index.html", gin.H{"Title": cfg.AppTitle, "LoginBg": loginBgStyle})
+		c.HTML(http.StatusOK, "index.html", gin.H{
+			"Title":     cfg.AppTitle,
+			"LoginBg":   loginBgStyle,
+			"AuthMode":  cfg.AuthMode,  // 前端據此切換 standalone / portal 行為
+			"PortalURL": cfg.PortalURL, // portal 模式的登入導向目標
+		})
 	}
-	r.GET("/", indexHandler)
-	r.GET("/index.html", indexHandler)
+	if cfg.AuthMode == config.AuthModePortal {
+		// portal 模式：未帶有效認證 cookie 的頁面請求 302 至 Portal 登入頁
+		r.GET("/", au.PortalPageGate(), indexHandler)
+		r.GET("/index.html", au.PortalPageGate(), indexHandler)
+	} else {
+		r.GET("/", indexHandler)
+		r.GET("/index.html", indexHandler)
+	}
 	r.Static("/static", "./web")
 
-	r.POST("/api/login", au.LoginHandler)
-	r.POST("/api/logout", au.LogoutHandler) // 清除頁面守門用的認證 cookie（公開：過期 session 也能清）
-	r.GET("/auth/discord", au.DiscordAuthHandler)
-	r.GET("/auth/discord/callback", au.DiscordCallbackHandler)
+	r.POST("/api/logout", au.LogoutHandler) // 清除認證 cookie（公開：過期 session 也能清；portal 模式登出亦用此清 cookie）
+	if cfg.AuthMode == config.AuthModeStandalone {
+		// 簽發相關端點僅 standalone 提供；portal 模式登入走 Portal，這些路由不註冊（404）
+		r.POST("/api/login", au.LoginHandler)
+		r.GET("/auth/discord", au.DiscordAuthHandler)
+		r.GET("/auth/discord/callback", au.DiscordCallbackHandler)
+	}
 
-	// 管理頁：以認證 cookie 做伺服器端守門，非管理員導回首頁（連骨架都拿不到）。
-	r.GET("/admin", au.RequireAdminPage(), func(c *gin.Context) { c.File("./web/admin.html") })
+	if cfg.AuthMode == config.AuthModeStandalone {
+		// 本地帳號與群組管理只屬於 standalone；portal 一律回 UniEntry 管理。
+		r.GET("/admin", au.RequireAdminPage(), func(c *gin.Context) { c.File("./web/admin.html") })
+	}
 
 	// WebSocket：自行用 query 參數 token 驗證後升級（瀏覽器無法為 WS 帶 Authorization 標頭）
 	r.GET("/ws", h.ServeWs)
@@ -231,19 +257,25 @@ func main() {
 	// ===== 受保護路由（需 JWT）=====
 	api := r.Group("/api")
 	api.Use(au.Middleware())
+	if cfg.AuthMode == config.AuthModePortal {
+		// portal 模式 cookie 會授權寫入，需擋跨站偽造請求（standalone 的 cookie 不授權，毋須此層）
+		api.Use(auth.RequireWriteHeader())
+	}
 	{
 		api.GET("/me", au.MeHandler)
-		api.POST("/me/password", au.ChangeOwnPasswordHandler) // 使用者自助改密碼（僅本地帳號）
-		// ===== 管理員專用（handler 內再驗證管理員身分）=====
-		api.POST("/admin/reload", au.ReloadConfigHandler)           // 手動重新載入設定（免重啟）
-		api.GET("/admin/overview", au.OverviewHandler)              // 帳號 / 群組總覽
-		api.POST("/admin/user/create", au.CreateUserHandler)        // 新增本地帳號
-		api.POST("/admin/user/password", au.SetUserPasswordHandler) // 重設帳號密碼
-		api.POST("/admin/user/delete", au.DeleteUserHandler)        // 刪除本地帳號
-		api.POST("/admin/discord/add", au.AddDiscordHandler)        // Discord 白名單新增
-		api.POST("/admin/discord/label", au.SetDiscordLabelHandler) // Discord 顯示備註更新
-		api.POST("/admin/discord/remove", au.RemoveDiscordHandler)  // Discord 白名單移除
-		api.POST("/admin/group/member", au.SetGroupMemberHandler)   // 群組成員指派
+		if cfg.AuthMode == config.AuthModeStandalone {
+			// 帳號管理僅 standalone 提供；portal 模式帳號在 Portal 管理，這些路由不註冊（404）
+			api.POST("/me/password", au.ChangeOwnPasswordHandler)       // 使用者自助改密碼（僅本地帳號）
+			api.POST("/admin/user/create", au.CreateUserHandler)        // 新增本地帳號
+			api.POST("/admin/user/password", au.SetUserPasswordHandler) // 重設帳號密碼
+			api.POST("/admin/user/delete", au.DeleteUserHandler)        // 刪除本地帳號
+			api.POST("/admin/discord/add", au.AddDiscordHandler)        // Discord 白名單新增
+			api.POST("/admin/discord/label", au.SetDiscordLabelHandler) // Discord 顯示備註更新
+			api.POST("/admin/discord/remove", au.RemoveDiscordHandler)  // Discord 白名單移除
+			api.POST("/admin/reload", au.ReloadConfigHandler)
+			api.GET("/admin/overview", au.OverviewHandler)
+			api.POST("/admin/group/member", au.SetGroupMemberHandler)
+		}
 		api.GET("/online-count", h.OnlineCountHandler)
 		api.GET("/files", fileH.ListFiles)
 		api.GET("/file", fileH.ReadFile)

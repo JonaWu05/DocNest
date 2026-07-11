@@ -61,8 +61,9 @@ type Client struct {
 	hub         *Hub
 	conn        *websocket.Conn
 	send        chan []byte
-	username    string // 顯示用
-	subject     string // 穩定身分鍵，presence 去重用
+	username    string   // 顯示用
+	subject     string   // 穩定身分鍵，presence 去重用
+	permissions []string // portal mode: expanded docnest app permissions
 	currentFile string
 	isEditing   bool
 }
@@ -122,9 +123,12 @@ func (h *Hub) Close() {
 }
 
 // canRead 判斷某連線是否對指定路徑具讀取權。az 未注入（如測試）或路徑為空時一律放行。
-func (h *Hub) canRead(subject, path string) bool {
+func (h *Hub) canRead(subject string, permissions []string, path string) bool {
 	if h.az == nil || path == "" {
 		return true
+	}
+	if h.auth != nil && h.auth.IsPortal() {
+		return authz.CanPortal(permissions, path, authz.AccessRead)
 	}
 	return h.az.Can(subject, path, authz.AccessRead)
 }
@@ -176,7 +180,7 @@ func (h *Hub) Run() {
 // o.path 非空時，僅送給對該路徑具讀取權的連線。
 func (h *Hub) deliver(o outbound) {
 	for c := range h.clients {
-		if !h.canRead(c.subject, o.path) {
+		if !h.canRead(c.subject, c.permissions, o.path) {
 			continue
 		}
 		h.sendTo(c, o.data)
@@ -235,7 +239,7 @@ func (h *Hub) broadcastPresence() {
 	for c := range h.clients {
 		view := make([]PresenceUser, len(users))
 		for i, u := range users {
-			if u.CurrentFile != "" && !h.canRead(c.subject, u.CurrentFile) {
+			if u.CurrentFile != "" && !h.canRead(c.subject, c.permissions, u.CurrentFile) {
 				u.CurrentFile = ""
 				u.IsEditing = false
 			}
@@ -298,16 +302,12 @@ func (h *Hub) BroadcastFileUpdated(path, savedBy string) {
 	}
 }
 
-// ServeWs 處理 GET /ws：先用 query 參數的 token 做 JWT 驗證，再升級為 WebSocket。
+// ServeWs 處理 GET /ws：先驗證身分（standalone 走 ?token=；portal 另接受認證 cookie），
+// 再升級為 WebSocket。
 func (h *Hub) ServeWs(c *gin.Context) {
-	tokenStr := c.Query("token")
-	if tokenStr == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少 token"})
-		return
-	}
-	claims, err := h.auth.ParseJWT(tokenStr)
+	claims, err := h.auth.AuthenticateWS(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "token 無效或已過期"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "token 無效、過期或未提供"})
 		return
 	}
 
@@ -318,11 +318,12 @@ func (h *Hub) ServeWs(c *gin.Context) {
 
 	// username / subject 一律取自 JWT，不採信前端。
 	client := &Client{
-		hub:      h,
-		conn:     conn,
-		send:     make(chan []byte, sendBuffer),
-		username: claims.Username,
-		subject:  auth.SubjectFromClaims(claims),
+		hub:         h,
+		conn:        conn,
+		send:        make(chan []byte, sendBuffer),
+		username:    claims.Username,
+		subject:     auth.SubjectFromClaims(claims),
+		permissions: append([]string(nil), claims.AppPermissions[authz.PortalAppID]...),
 	}
 	// Hub 已開始關閉時不再接收新連線（避免 register 永久阻塞拖住此 handler）。
 	select {

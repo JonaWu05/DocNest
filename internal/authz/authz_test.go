@@ -265,3 +265,32 @@ func TestRequireAccess(t *testing.T) {
 		t.Errorf("拒絕應回 403，得到 %d", w2.Code)
 	}
 }
+
+func TestCanPortal(t *testing.T) {
+	permissions := []string{"pages.read:welcome.md", "pages.write:teamA", "pages.read:shared"}
+	cases := []struct {
+		path string
+		need int
+		want bool
+	}{
+		{"welcome.md", AccessRead, true},
+		{"welcome.md", AccessWrite, false},
+		{"teamA/x.md", AccessWrite, true},
+		{"teamA/x.md", AccessRead, true},
+		{"teamAnother/x.md", AccessRead, false},
+		{"shared/x.md", AccessRead, true},
+		{"shared/x.md", AccessWrite, false},
+		{"private.md", AccessRead, false},
+	}
+	for _, tc := range cases {
+		if got := CanPortal(permissions, tc.path, tc.need); got != tc.want {
+			t.Errorf("CanPortal(%q,%d)=%v want %v", tc.path, tc.need, got, tc.want)
+		}
+	}
+	if CanPortal([]string{"pages.write"}, "any/deep.md", AccessWrite) != true {
+		t.Error("unscoped pages.write should cover the whole tree")
+	}
+	if CanPortal([]string{"pages.write:../secret", "other.read"}, "secret", AccessRead) {
+		t.Error("malformed and foreign permissions must fail closed")
+	}
+}

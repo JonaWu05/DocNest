@@ -100,13 +100,13 @@ func (f *Files) invalidateFor(rel string) {
 //
 // 產生「新節點」而非就地修改輸入：輸入來自共用的快取樹（見 store.CachedTree），
 // 不可被各請求的權限過濾汙染。
-func (f *Files) filterTree(nodes []*store.FileNode, subject string) []*store.FileNode {
+func (f *Files) filterTree(nodes []*store.FileNode, c *gin.Context) []*store.FileNode {
 	out := []*store.FileNode{}
 	for _, n := range nodes {
 		if n.IsDir {
-			children := f.filterTree(n.Children, subject)
-			canReadDir := f.az.Can(subject, n.Path, authz.AccessRead)
-			if len(children) > 0 || f.az.Can(subject, n.Path, authz.AccessRead) {
+			children := f.filterTree(n.Children, c)
+			canReadDir := f.az.CanContext(c, n.Path, authz.AccessRead)
+			if len(children) > 0 || canReadDir {
 				title := ""
 				if canReadDir || canReadIndexTitle(children) {
 					title = n.Title
@@ -115,17 +115,17 @@ func (f *Files) filterTree(nodes []*store.FileNode, subject string) []*store.Fil
 					Name:     n.Name,
 					Path:     n.Path,
 					IsDir:    true,
-					Writable: f.az.Can(subject, n.Path, authz.AccessWrite),
+					Writable: f.az.CanContext(c, n.Path, authz.AccessWrite),
 					Title:    title,
 					Children: children,
 				})
 			}
-		} else if f.az.Can(subject, n.Path, authz.AccessRead) {
+		} else if f.az.CanContext(c, n.Path, authz.AccessRead) {
 			out = append(out, &store.FileNode{
 				Name:     n.Name,
 				Path:     n.Path,
 				IsDir:    false,
-				Writable: f.az.Can(subject, n.Path, authz.AccessWrite),
+				Writable: f.az.CanContext(c, n.Path, authz.AccessWrite),
 				Title:    n.Title,
 				IsIndex:  n.IsIndex,
 			})
@@ -150,7 +150,7 @@ func (f *Files) ListFiles(c *gin.Context) {
 		httpx.ServerError(c, "無法讀取文件目錄", err)
 		return
 	}
-	children := f.filterTree(tree.Children, authz.SubjectOf(c))
+	children := f.filterTree(tree.Children, c)
 	c.JSON(http.StatusOK, gin.H{"files": children})
 }
 
@@ -444,7 +444,7 @@ func (f *Files) Raw(c *gin.Context) {
 	// 直接權限不足時，再嘗試「來源文件驗證」：閱讀者可檢視自己有權讀、
 	// 且該頁確實引用到的 asset（見 allowViaReferrer）。
 	relPath := f.store.RelOf(absPath)
-	if !f.az.Can(authz.SubjectOf(c), relPath, authz.AccessRead) && !f.allowViaReferrer(c, relPath) {
+	if !f.az.CanContext(c, relPath, authz.AccessRead) && !f.allowViaReferrer(c, relPath) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "權限不足"})
 		return
 	}
@@ -501,7 +501,7 @@ func (f *Files) allowViaReferrer(c *gin.Context, assetRel string) bool {
 	}
 	fromRel := f.store.RelOf(fromAbs)
 	// 來源必須是合法文件且使用者有讀取權
-	if !store.IsAllowedFile(fromAbs) || !f.az.Can(authz.SubjectOf(c), fromRel, authz.AccessRead) {
+	if !store.IsAllowedFile(fromAbs) || !f.az.CanContext(c, fromRel, authz.AccessRead) {
 		return false
 	}
 	refs, ok := f.docReferences(fromAbs, fromRel)

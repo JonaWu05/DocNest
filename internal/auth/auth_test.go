@@ -1,12 +1,15 @@
 package auth
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
+	entryauth "github.com/JonaWu05/UniEntry/entryauth"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/JonaWu05/DocNest/internal/authz"
 	"github.com/JonaWu05/DocNest/internal/config"
@@ -26,6 +29,24 @@ func newTestAuth(t *testing.T) *Auth {
 		t.Fatal(err)
 	}
 	return New(cfg, accounts, az)
+}
+
+func newPortalTestAuth(t *testing.T) *Auth {
+	t.Helper()
+	cfg := &config.Config{JWTSecret: []byte("test-secret"), JWTExpire: time.Hour, AuthMode: config.AuthModePortal, PortalURL: "http://portal:8081"}
+	return New(cfg, NewEmptyAccounts(), authz.NewPortalFallback())
+}
+
+func signPortalToken(t *testing.T, permissions []string) string {
+	t.Helper()
+	claims := entryauth.NewClaimsWithAuthz("Alice", "local", "local:alice", nil,
+		map[string][]string{authz.PortalAppID: {"editor"}},
+		map[string][]string{authz.PortalAppID: permissions}, time.Hour)
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte("test-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
 }
 
 func TestJWTRoundTrip(t *testing.T) {
@@ -91,6 +112,62 @@ func TestMiddleware(t *testing.T) {
 	}
 	if c2.GetString("subject") != "local:alice" || c2.GetString("username") != "alice" {
 		t.Errorf("context 未正確設定：subject=%q username=%q", c2.GetString("subject"), c2.GetString("username"))
+	}
+}
+
+func TestPortalMiddlewareUsesEntryAuthClaims(t *testing.T) {
+	a := newPortalTestAuth(t)
+	token := signPortalToken(t, []string{"pages.read:teamA", "pages.write:shared"})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/me?token=must-not-be-used", nil)
+	c.Request.AddCookie(&http.Cookie{Name: entryauth.CookieName, Value: token})
+	a.Middleware()(c)
+	if c.IsAborted() {
+		t.Fatalf("valid portal cookie should pass: %s", w.Body.String())
+	}
+	if !c.GetBool("portal_auth") || c.GetString("auth_source") != string(SourceCookie) {
+		t.Fatalf("portal context/source missing: %#v", c.Keys)
+	}
+	permissions := authz.PortalPermissionsOf(c)
+	if len(permissions) != 2 || !authz.CanPortal(permissions, "shared/x.md", authz.AccessWrite) {
+		t.Fatalf("portal app permissions missing: %#v", permissions)
+	}
+}
+
+func TestPortalDoesNotAcceptQueryTokenForAPI(t *testing.T) {
+	a := newPortalTestAuth(t)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/me?token="+signPortalToken(t, []string{"pages.read"}), nil)
+	a.Middleware()(c)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("portal API query token should be rejected, got %d", w.Code)
+	}
+}
+
+func TestRequireWriteHeaderForPortalCookie(t *testing.T) {
+	for _, tc := range []struct {
+		name, header, value string
+		want                int
+	}{
+		{"missing", "", "", http.StatusForbidden},
+		{"custom header", "X-Requested-With", "DocNest", http.StatusOK},
+		{"same origin beacon", "Sec-Fetch-Site", "same-origin", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/file", nil)
+			c.Set("auth_source", string(SourceCookie))
+			if tc.header != "" {
+				c.Request.Header.Set(tc.header, tc.value)
+			}
+			RequireWriteHeader()(c)
+			if w.Code != tc.want {
+				t.Fatalf("got %d want %d", w.Code, tc.want)
+			}
+		})
 	}
 }
 

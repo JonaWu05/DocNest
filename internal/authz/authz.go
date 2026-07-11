@@ -29,6 +29,12 @@ const (
 // 沿用既有設定檔中的群組，不另立新概念；"*" 萬用成員不視為管理員（須為具名身分）。
 const AdminGroup = "admins"
 
+const (
+	PortalAppID          = "docnest"
+	PermissionPagesRead  = "pages.read"
+	PermissionPagesWrite = "pages.write"
+)
+
 // rule 為設定檔中的單一條規則。
 type rule struct {
 	Path   string `json:"path"`   // 相對 DOC_ROOT 的路徑前綴；"" 代表根（涵蓋全部）
@@ -70,6 +76,15 @@ type Authz struct {
 	mu   sync.RWMutex
 	snap *snapshot
 	path string // 設定檔來源路徑（供群組成員編輯時 read-modify-write）
+}
+
+// NewPortalFallback creates a deny-all local policy without reading a file.
+// Portal requests must use CanContext/CanPortal with JWT permissions.
+func NewPortalFallback() *Authz {
+	return &Authz{snap: &snapshot{
+		enabled: true, defaultLevel: AccessNone, rulesBySubject: map[string][]normRule{},
+		admins: map[string]bool{}, groupMembers: map[string][]string{},
+	}}
 }
 
 // Load 從設定檔建立 Authz。
@@ -187,6 +202,65 @@ func (a *Authz) effectiveAccess(subject, relPath string) int {
 // Can 判斷 subject 對 relPath 是否具備至少 need 等級的權限。
 func (a *Authz) Can(subject, relPath string, need int) bool {
 	return a.effectiveAccess(subject, relPath) >= need
+}
+
+// CanPortal evaluates UniEntry's already-expanded app_permissions for DocNest.
+// Unscoped pages.read/pages.write cover the whole tree; a suffix after ':' is a
+// normalized path prefix. Unknown and malformed permissions are ignored.
+func CanPortal(permissions []string, relPath string, need int) bool {
+	target := normPath(relPath)
+	for _, permission := range permissions {
+		permission = strings.TrimSpace(permission)
+		level, scope, ok := parsePortalPermission(permission)
+		if ok && level >= need && matchPath(scope, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func parsePortalPermission(permission string) (level int, scope string, ok bool) {
+	base, rawScope, scoped := strings.Cut(permission, ":")
+	switch base {
+	case PermissionPagesWrite:
+		level = AccessWrite
+	case PermissionPagesRead:
+		level = AccessRead
+	default:
+		return AccessNone, "", false
+	}
+	if !scoped {
+		return level, "", true
+	}
+	rawScope = strings.TrimSpace(rawScope)
+	if rawScope == "" || strings.Contains(rawScope, "..") {
+		return AccessNone, "", false
+	}
+	scope = normPath(rawScope)
+	if scope == "" || scope == "." {
+		return AccessNone, "", false
+	}
+	return level, scope, true
+}
+
+// PortalPermissionsOf returns only this service's permissions, populated by
+// auth middleware. A missing claim is deliberately an empty set (fail closed).
+func PortalPermissionsOf(c *gin.Context) []string {
+	v, ok := c.Get("app_permissions")
+	if !ok {
+		return nil
+	}
+	permissions, _ := v.([]string)
+	return permissions
+}
+
+// CanContext chooses the request's UniEntry permissions in portal mode and
+// otherwise preserves the local subject/path policy.
+func (a *Authz) CanContext(c *gin.Context, relPath string, need int) bool {
+	if c.GetBool("portal_auth") {
+		return CanPortal(PortalPermissionsOf(c), relPath, need)
+	}
+	return a.Can(SubjectOf(c), relPath, need)
 }
 
 // HasAnyRead 判斷 subject 是否在任何地方擁有讀取權；全無者登入後僅顯示歡迎頁。
@@ -316,7 +390,7 @@ func (a *Authz) SetGroupMember(group, subject string, add bool) error {
 
 // RequireAccess 在 handler 開頭檢查權限，不足時回 403 並中止請求；回傳是否放行。
 func (a *Authz) RequireAccess(c *gin.Context, relPath string, need int) bool {
-	if a.Can(SubjectOf(c), relPath, need) {
+	if a.CanContext(c, relPath, need) {
 		return true
 	}
 	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "權限不足"})

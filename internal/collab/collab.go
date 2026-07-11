@@ -118,25 +118,31 @@ func ctrlFrame(m controlMsg) []byte {
 	return frame(tagControl, b)
 }
 
-// ServeWs 處理 GET /ws/collab?path=xxx&token=yyy：驗證 token 與讀取權後升級並加入房間。
+// ServeWs 處理 GET /ws/collab?path=xxx：驗證身分（standalone 走 ?token=；
+// portal 另接受認證 cookie）與讀取權後升級並加入房間。
 func (h *Hub) ServeWs(c *gin.Context) {
-	tokenStr := c.Query("token")
 	path := c.Query("path")
-	if tokenStr == "" || path == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 token 或 path"})
+	if path == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path"})
 		return
 	}
-	claims, err := h.auth.ParseJWT(tokenStr)
+	claims, err := h.auth.AuthenticateWS(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "token 無效或已過期"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "token 無效、過期或未提供"})
 		return
 	}
 	subject := auth.SubjectFromClaims(claims)
-	if h.az != nil && !h.az.Can(subject, path, authz.AccessRead) {
+	canRead := h.az == nil || h.az.Can(subject, path, authz.AccessRead)
+	canWrite := h.az == nil || h.az.Can(subject, path, authz.AccessWrite)
+	if h.auth.IsPortal() {
+		permissions := claims.AppPermissions[authz.PortalAppID]
+		canRead = authz.CanPortal(permissions, path, authz.AccessRead)
+		canWrite = authz.CanPortal(permissions, path, authz.AccessWrite)
+	}
+	if !canRead {
 		c.JSON(http.StatusForbidden, gin.H{"error": "權限不足"})
 		return
 	}
-	canWrite := h.az == nil || h.az.Can(subject, path, authz.AccessWrite)
 
 	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
