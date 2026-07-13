@@ -39,12 +39,13 @@ cd DocNest
 
 # 2. 建立設定檔
 cp .env.example .env
-cp accounts.example.json accounts.json
+cp config/accounts.example.json config/accounts.json
+cp config/permissions.example.json config/permissions.json
 
-# 3. 產生帳號密碼的 bcrypt hash，填入 accounts.json 的 local
+# 3. 產生帳號密碼的 bcrypt hash，填入 config/accounts.json 的 local
 go run ./cmd/hashpw '你的密碼'
 
-# 4. 編輯 .env 設定 JWT_SECRET；編輯 accounts.json 填入帳號（見下方設定說明）
+# 4. 編輯 .env 設定 JWT_SECRET；編輯 config/ 下的帳號與權限設定
 
 # 5. 啟動
 go run .
@@ -66,15 +67,15 @@ go run .
 | `ALLOWED_ORIGINS` | — | 允許的跨來源網域（CORS 與 WebSocket 共用），逗號分隔；留空為開發模式（允許所有來源）|
 | `TRUSTED_PROXIES` | — | 信任的反向代理來源（IP 或 CIDR，逗號分隔）；架在反向代理後方時設定，才能取得真實客戶端 IP。留空為不信任任何代理 |
 | `HOST` | — | 服務綁定位址；留空＝綁所有介面（`0.0.0.0`）。開發可設 `127.0.0.1` 僅本機 |
-| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` / `DISCORD_REDIRECT_URI` | — | Discord OAuth（選填，全部設定才啟用）；登入白名單見 `accounts.json` |
-| `ACCOUNTS_FILE` / `PERMISSIONS_FILE` | — | 帳號 / 權限設定檔路徑，預設 `./accounts.json`、`./permissions.json` |
+| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` / `DISCORD_REDIRECT_URI` | — | Discord OAuth（選填，全部設定才啟用）；登入白名單見 `config/accounts.json` |
+| `ACCOUNTS_FILE` / `PERMISSIONS_FILE` | — | 帳號 / 權限設定檔路徑，預設 `./config/accounts.json`、`./config/permissions.json`；舊根目錄檔案仍可 fallback |
 
 > `.env` 含密鑰，已列入 `.gitignore`，請勿提交。`docs/` 為執行期資料（等同各自的資料庫目錄），亦不納入版控，僅保留 `welcome.md` 作為範本。
 
-## 帳號與權限（accounts.json / permissions.json）
+## 帳號與權限（config/）
 
-- **`accounts.json`**：本地帳號（`local`：`帳號` → bcrypt hash）與 Discord 登入白名單（`discord_allowed`：User ID 陣列）。範本為 `accounts.example.json`；產生密碼 hash：`go run ./cmd/hashpw '你的密碼'`。
-- **`permissions.json`**：群組 + 路徑前綴的存取控制。範本為 `permissions.example.json`；名為 `admins` 群組的成員即**管理員**（可進入管理頁；無此檔則無任何管理員）。
+- **`config/accounts.json`**：本地帳號（`local`：`帳號` → bcrypt hash）與 Discord 登入白名單。範本為 `config/accounts.example.json`；產生密碼 hash：`go run ./cmd/hashpw '你的密碼'`。
+- **`config/permissions.json`**：群組 + 路徑前綴的存取控制。範本為 `config/permissions.example.json`；名為 `admins` 群組的成員即**管理員**。
 - **管理頁 `/admin`**：管理員登入後點右上角「管理」進入，可**免手改檔、免重啟**地新增／刪除本地帳號、重設密碼、增減 Discord 白名單、把成員指派到既有群組；變動即時生效。頁面以認證 cookie 做伺服器端守門，非管理員無法進入。仍可用頁內「重載設定」重新載入手動改過的檔案。
 - **自助改密碼**：本地帳號登入後可點右上角「改密碼」修改自己的密碼（需驗舊密碼）。
 - 兩檔均含部署資料（密碼 hash、成員身分），已列入 `.gitignore`，請勿提交。
@@ -85,6 +86,8 @@ go run .
 ```
 .
 ├── main.go              # 進入點：載入設定、建立各服務（DI）、設定 gin 與路由、啟動
+├── bin/                 # 本機建置產物（僅追蹤 .gitkeep，執行檔忽略）
+├── config/              # standalone 帳號與路徑權限設定（正式檔忽略、範例檔追蹤）
 ├── internal/
 │   ├── config/          # 設定載入（環境變數）
 │   ├── store/           # 路徑安全、副檔名白名單、檔案樹、原子寫檔
@@ -97,6 +100,7 @@ go run .
 │   ├── upload/          # 附件上傳與列舉
 │   └── httpx/           # HTTP 共用小工具
 ├── cmd/hashpw/          # 產生 bcrypt 密碼 hash 的小工具
+├── scripts/             # 前端 bundle、Yjs 協作檢查與效能工具
 └── web/                 # 前端（index.html、admin.html、styles.css、js/ 模組、vendor/ 在地相依）
 ```
 
@@ -112,7 +116,7 @@ PORTAL_URL=http://172.24.15.21:8081
 JWT_SECRET=<與 UniEntry 相同>
 ```
 
-Portal 模式不讀取 `accounts.json` 或 `permissions.json`，也不提供本地帳號、Discord、密碼及群組管理 API。DocNest 只驗證 UniEntry JWT，並讀取 `app_permissions["docnest"]`：
+Portal 模式不讀取 `config/accounts.json` 或 `config/permissions.json`，也不提供本地帳號、Discord、密碼及群組管理 API。DocNest 只驗證 UniEntry JWT，並讀取 `app_permissions["docnest"]`：
 
 - `pages.read` / `pages.write`：整個文件根目錄。
 - `pages.read:<路徑前綴>` / `pages.write:<路徑前綴>`：指定路徑及其後代。

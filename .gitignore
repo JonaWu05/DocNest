@@ -2,14 +2,16 @@
 *.exe
 gowatch.yaml
 DocNest
+/bin/*
+!/bin/.gitkeep
 
 # 環境變數（含密鑰、密碼 hash，不可進版控）；.env.example 可保留作為範本
 .env
 
-# 權限分組設定（含成員身分鍵，屬部署資料）；permissions.example.json 為範本可保留
+# 權限分組設定（含成員身分鍵，屬部署資料）；config/permissions.example.json 為範本可保留
 permissions.json
 
-# 帳號設定（含密碼 hash 與 Discord 白名單，屬部署資料）；accounts.example.json 為範本可保留
+# 帳號設定（含密碼 hash 與 Discord 白名單，屬部署資料）；config/accounts.example.json 為範本可保留
 accounts.json
 
 # 作業系統 / 編輯器雜項
@@ -23,8 +25,7 @@ Thumbs.db
 # 上傳的附件（docs/assets/）也一併被涵蓋。
 /docs/*
 !/docs/file-tree-naming-guide.md
+!/docs/testing.md
 
 # Node 相依（即時共編前端打包時的開發相依，非執行期產物）
 /node_modules/
-/package.json
-/package-lock.json

@@ -132,11 +132,11 @@ func Load() *Config {
 	}
 	c.PermissionsFile = strings.TrimSpace(os.Getenv("PERMISSIONS_FILE"))
 	if c.PermissionsFile == "" {
-		c.PermissionsFile = "./permissions.json"
+		c.PermissionsFile = defaultConfigPath("./config/permissions.json", "./permissions.json")
 	}
 	c.AccountsFile = strings.TrimSpace(os.Getenv("ACCOUNTS_FILE"))
 	if c.AccountsFile == "" {
-		c.AccountsFile = "./accounts.json"
+		c.AccountsFile = defaultConfigPath("./config/accounts.json", "./accounts.json")
 	}
 
 	// 資源回收筒保留天數：預設 15；明確設為 0 可停用自動清除。非法值維持預設。
@@ -160,6 +160,20 @@ func Load() *Config {
 	}
 
 	return c
+}
+
+// defaultConfigPath prefers the organized config/ location, while accepting
+// the former root-level path when upgrading an existing standalone deployment.
+// If neither exists, return the new path so startup warnings guide new installs
+// to the current layout.
+func defaultConfigPath(preferred, legacy string) string {
+	if _, err := os.Stat(preferred); err == nil {
+		return preferred
+	}
+	if _, err := os.Stat(legacy); err == nil {
+		return legacy
+	}
+	return preferred
 }
 
 // OriginAllowed 判斷某 Origin 是否獲准（供 WebSocket CheckOrigin 使用）。

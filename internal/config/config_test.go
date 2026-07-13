@@ -2,6 +2,8 @@ package config
 
 import (
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -20,6 +22,30 @@ func TestParseBoolEnv(t *testing.T) {
 		if parseBoolEnv(key) {
 			t.Errorf("%q 應為 false", v)
 		}
+	}
+}
+
+func TestDefaultConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	preferred := filepath.Join(dir, "config", "accounts.json")
+	legacy := filepath.Join(dir, "accounts.json")
+	if got := defaultConfigPath(preferred, legacy); got != preferred {
+		t.Fatalf("neither exists: got %q want preferred %q", got, preferred)
+	}
+	if err := os.WriteFile(legacy, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultConfigPath(preferred, legacy); got != legacy {
+		t.Fatalf("legacy fallback: got %q want %q", got, legacy)
+	}
+	if err := os.MkdirAll(filepath.Dir(preferred), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(preferred, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultConfigPath(preferred, legacy); got != preferred {
+		t.Fatalf("preferred wins: got %q want %q", got, preferred)
 	}
 }
 
