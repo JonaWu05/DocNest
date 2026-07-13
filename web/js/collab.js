@@ -14,6 +14,8 @@ const TAG_STATE = 0x73; // 's' 完整狀態快照(本端→伺服器,供 log 壓
 const TAG_CONTROL = 0x63; // 'c' 控制訊息(JSON)
 
 const SAVE_DELAY = 1500; // saver 落檔的 debounce 間隔(毫秒),比照 autosave
+const SAVE_RETRY_BASE = 1000; // saver 落檔失敗後的重試退避起始延遲(毫秒)
+const SAVE_RETRY_MAX = 30000; // saver 落檔失敗後的重試退避上限(毫秒)
 const AWARENESS_HEARTBEAT = 10000; // awareness 心跳間隔(毫秒):多人時定期重送,維持存活並讓晚加入者看到游標
 const RECONNECT_BASE = 1000; // 共編 WS 重連退避起始延遲(毫秒)
 const RECONNECT_MAX = 30000; // 共編 WS 重連退避上限(毫秒)
@@ -92,19 +94,61 @@ function sendControl(obj) {
 
 // scheduleSaverSave 排程一次落檔(僅 saver),連續變更時 debounce 成一次。
 // 外部改檔待決期間暫停,避免 saver 以共編內容靜默覆蓋磁碟上的外部變更(由橫幅讓使用者選擇後才恢復)。
+function queueSaverSave(targetSession, delay) {
+  clearTimeout(targetSession.saveTimer);
+  targetSession.saveTimer = setTimeout(() => {
+    targetSession.saveTimer = null;
+    void runSaverSave(targetSession);
+  }, delay);
+}
+
 function scheduleSaverSave() {
-  if (session.externalChanged) return;
+  if (!session || !session.isSaver || session.externalChanged) return;
+  session.saveRevision = (session.saveRevision || 0) + 1;
   session.pendingSave = true;
   clearTimeout(session.saveTimer);
-  session.saveTimer = setTimeout(runSaverSave, SAVE_DELAY);
+  session.saveTimer = null;
+  // 存檔進行中只記錄新 revision；完成後由 runSaverSave 依 revision 判斷是否需要再存一次。
+  if (!session.saveInFlight) queueSaverSave(session, SAVE_DELAY);
 }
 
 // runSaverSave 抽出計時器到期後的動作，讓生命週期測試可直接覆蓋 callback / pending 狀態。
-// 目前仍保留既有同步行為；階段 1 會改為等待 Promise 成功後才清除 pendingSave。
-function runSaverSave() {
-  if (session && session.isSaver && session.onSaveRequest) {
-    session.onSaveRequest(session.text.toString());
-    session.pendingSave = false;
+// callback 可為同步或 Promise；只有確認成功且期間沒有新 revision，才清除 pendingSave。
+async function runSaverSave(targetSession = session) {
+  if (!targetSession || session !== targetSession || !targetSession.isSaver || !targetSession.onSaveRequest) return false;
+  if (targetSession.externalChanged || targetSession.saveInFlight) return false;
+
+  clearTimeout(targetSession.saveTimer);
+  targetSession.saveTimer = null;
+  const revision = targetSession.saveRevision || 0;
+  const content = targetSession.text.toString();
+  targetSession.saveInFlight = true;
+  targetSession.saveInFlightRevision = revision;
+  let nextDelay = null;
+
+  try {
+    const request = Promise.resolve(targetSession.onSaveRequest(content, targetSession.path));
+    targetSession.saveInFlightPromise = request;
+    const result = await request;
+    if (result === false) throw new Error("共編內容落檔失敗");
+    if (session === targetSession) {
+      targetSession.saveRetryAttempts = 0;
+      targetSession.pendingSave = (targetSession.saveRevision || 0) !== revision;
+      if (targetSession.pendingSave) nextDelay = SAVE_DELAY;
+    }
+    return true;
+  } catch (e) {
+    if (session === targetSession && targetSession.isSaver && !targetSession.externalChanged) {
+      targetSession.pendingSave = true;
+      const attempts = targetSession.saveRetryAttempts || 0;
+      nextDelay = Math.min(SAVE_RETRY_MAX, SAVE_RETRY_BASE * 2 ** attempts);
+      targetSession.saveRetryAttempts = attempts + 1;
+    }
+    return false;
+  } finally {
+    targetSession.saveInFlight = false;
+    targetSession.saveInFlightPromise = null;
+    if (nextDelay !== null && session === targetSession) queueSaverSave(targetSession, nextDelay);
   }
 }
 
@@ -293,7 +337,7 @@ function handleMessage(data) {
 //   opts.canWrite      此檔是否可寫(唯讀者不會走到這裡,保留旗標供日後使用)
 //   opts.seedText      若被指派為 seeder,用來初始化文件的 .md 內容
 //   opts.onContentChange(text)  文件內容變動時呼叫(供更新真實來源與預覽/目錄)
-//   opts.onSaveRequest(text)    身為 saver 需落檔時呼叫(走既有存檔流程)
+//   opts.onSaveRequest(text, path) 身為 saver 需落檔時呼叫(走既有存檔流程，成功回傳 true)
 export async function connectCollab(path, cm, opts) {
   disconnectCollab(); // 切檔前先收掉舊房間(會遞增 connectGen)
   const myGen = connectGen;
@@ -325,6 +369,11 @@ export async function connectCollab(path, cm, opts) {
     externalChanged: false, // 磁碟被外部改寫且尚未由 saver 決定如何處理：暫停自動落檔，避免靜默覆蓋
     saveTimer: null,
     pendingSave: false,
+    saveRevision: 0,
+    saveInFlight: false,
+    saveInFlightPromise: null,
+    saveInFlightRevision: 0,
+    saveRetryAttempts: 0,
     heartbeatTimer: null,
     reconnectTimer: null,
     reconnectAttempts: 0,
@@ -374,15 +423,33 @@ export async function connectCollab(path, cm, opts) {
   // 綁定延後到收到 init 後(見 ensureBinding),避免可寫檔進編輯時的內容閃爍。
   openSocket(mySession);
 
-  await ready; // 等綁定完成再回傳,呼叫端才解除唯讀
+  try {
+    await ready; // 等綁定完成再回傳,呼叫端才解除唯讀
+  } catch (e) {
+    // init 未抵達時完整收掉半成品 session，讓 editor 的 catch 安全退回單機編輯。
+    if (session === mySession) {
+      disconnectCollab();
+      connectFailed = true;
+    }
+    throw e;
+  }
 }
 
 // createReadyPromise 集中「等待 init」的生命週期契約，供測試以短 timeout 驗證。
-// 目前逾時仍沿用既有 resolve 行為；階段 1 會改成 reject 並觸發安全的單機回退。
 function createReadyPromise(targetSession, timeoutMs = CONNECT_READY_TIMEOUT) {
-  return new Promise((resolve) => {
-    targetSession.markReady = resolve;
-    setTimeout(resolve, timeoutMs);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      targetSession.markReady = null;
+      targetSession.cancelReady = null;
+      callback(value);
+    };
+    const timer = setTimeout(() => finish(reject, new Error("共編連線初始化逾時")), timeoutMs);
+    targetSession.markReady = () => finish(resolve);
+    targetSession.cancelReady = () => finish(reject, new Error("共編連線已取消"));
   });
 }
 
@@ -420,14 +487,20 @@ function scheduleReconnect(s) {
 
 // flushBeacon 在分頁關閉 / 隱藏時,以 sendBeacon 把 saver 尚未落檔的內容送出(unload 期間 fetch 不可靠)。
 // 帶 force 略過樂觀鎖(與 saver 正常落檔一致),token 走 query(beacon 無法設標頭)。
-function flushBeacon() {
-  if (!session || !session.isSaver || !session.pendingSave) return;
-  if (session.externalChanged) return; // 外部改檔待決:不在關閉時靜默覆蓋磁碟
+function flushSessionBeacon(targetSession, content = targetSession && targetSession.text.toString()) {
+  if (!targetSession || !targetSession.isSaver || !targetSession.pendingSave) return false;
+  if (targetSession.externalChanged) return false; // 外部改檔待決:不在關閉時靜默覆蓋磁碟
+  if (typeof navigator.sendBeacon !== "function") return false;
   const token = getToken();
   const tokenPart = token ? `&token=${encodeURIComponent(token)}` : "";
-  const url = `${API_BASE}/api/file?path=${encodeURIComponent(session.path)}${tokenPart}&force=1`;
-  navigator.sendBeacon(url, new Blob([session.text.toString()], { type: "text/plain; charset=utf-8" }));
-  session.pendingSave = false;
+  const url = `${API_BASE}/api/file?path=${encodeURIComponent(targetSession.path)}${tokenPart}&force=1`;
+  const accepted = navigator.sendBeacon(url, new Blob([content], { type: "text/plain; charset=utf-8" }));
+  if (accepted) targetSession.pendingSave = false;
+  return accepted;
+}
+
+function flushBeacon() {
+  return flushSessionBeacon(session);
 }
 if (typeof window !== "undefined") window.addEventListener("pagehide", flushBeacon);
 
@@ -444,12 +517,49 @@ export function disconnectCollab() {
   if (!session) return;
   const s = session;
   session = null; // 先清空,讓後續遲到的回呼/事件變成 no-op
+  if (s.cancelReady) s.cancelReady(); // 切檔時立即結束等待 init 的 Promise，不殘留到 timeout
   clearTimeout(s.saveTimer);
   clearTimeout(s.reconnectTimer);
   clearInterval(s.heartbeatTimer);
   // 收尾前把尚未落檔的內容存下(僅 saver 且確有待存),避免切檔/關檔遺失最後 1.5 秒的編輯。
   // 外部改檔待決時不收尾落檔,避免以共編內容靜默覆蓋磁碟上的外部變更。
-  if (s.pendingSave && s.isSaver && !s.externalChanged && s.onSaveRequest) s.onSaveRequest(s.text.toString());
+  if (s.pendingSave && s.isSaver && !s.externalChanged) {
+    const content = s.text.toString();
+    const requestFinalSave = () => {
+      if (!s.pendingSave) return;
+      if (!s.onSaveRequest) {
+        flushSessionBeacon(s, content);
+        return;
+      }
+      try {
+        const result = s.onSaveRequest(content, s.path);
+        Promise.resolve(result).then(
+          (saved) => {
+            if (saved === false) flushSessionBeacon(s, content);
+            else s.pendingSave = false;
+          },
+          () => flushSessionBeacon(s, content),
+        );
+      } catch (e) {
+        flushSessionBeacon(s, content);
+      }
+    };
+
+    // 已有請求在途時不可平行送出收尾版本，否則較舊的請求若較晚完成會覆蓋最後編輯。
+    // 等它結束後，若期間沒有新 revision 且已成功就直接完成；否則再補送切檔當下捕捉的內容。
+    if (s.saveInFlightPromise) {
+      const inFlightRevision = s.saveInFlightRevision || 0;
+      s.saveInFlightPromise.then(
+        (saved) => {
+          if (saved !== false && (s.saveRevision || 0) === inFlightRevision) s.pendingSave = false;
+          else requestFinalSave();
+        },
+        requestFinalSave,
+      );
+    } else {
+      requestFinalSave();
+    }
+  }
   // 通知他人移除我的游標(趁連線還開著;否則對端要等逾時才清掉殘留的游標)。
   if (s.awareness && s.streaming && s.ws && s.ws.readyState === WebSocket.OPEN) {
     try {

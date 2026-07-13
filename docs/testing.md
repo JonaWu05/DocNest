@@ -15,15 +15,12 @@ npm test
 
 ```bash
 go test -tags knownbugs ./...
-npm run test:known-bugs
 ```
 
-這兩個命令目前預期失敗。後續階段每修好一項，就移除對應 Go build tag，或把前端案例移到 `scripts/tests/` 的正式套件，讓它成為永久回歸測試。
+這個命令目前預期失敗。前端階段 1 已修復的案例已移到 `scripts/tests/` 正式套件，會隨 `npm test` 永久回歸；後續階段每修好一項 Go 缺陷，就移除對應 build tag 並轉入日常測試。
 
 目前記錄的紅燈規格包括：
 
-- 共編 init 逾時必須安全退回單機模式。
-- 非同步共編存檔成功前必須保留 pending 狀態。
 - 等價文件路徑必須共用同一個共編房間。
 - ACL 同群組內採最長前綴。
 - 並發建立檔案只能有一個成功者。

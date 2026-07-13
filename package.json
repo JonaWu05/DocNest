@@ -8,7 +8,6 @@
     "check:bundle": "node scripts/check-bundle.mjs",
     "check:collab": "node scripts/collab-render-check.mjs",
     "test:logic": "node --test scripts/tests/*.test.mjs",
-    "test:known-bugs": "node --test scripts/tests/known-bugs/*.test.mjs",
     "test": "npm run check:bundle && npm run check:collab && npm run test:logic"
   },
   "repository": {

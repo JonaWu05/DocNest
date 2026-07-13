@@ -116,12 +116,12 @@ async function ensureCollab() {
     onPresenceChange: renderCollabStatus, // 房內參與者 / 落檔者 / 落檔時間變動 → 重繪共編狀態列
     onExternalChange: setCollabExternal,  // 外部改檔（僅落檔者）→ 顯示 / 收掉協調橫幅
 
-    onSaveRequest: (txt) => {
-      state.currentContent = txt;
+    onSaveRequest: async (txt, path) => {
+      if (state.currentPath === path) state.currentContent = txt;
       // 由 saver 靜默落檔，且略過樂觀鎖（force）：共編內容為 CRDT 合併後的超集，已含磁碟上的版本，
       // saver 移交後新 saver 的版本號可能落後，若帶版本鎖會持續 409、檔案永遠存不進去。
       // （外部直接改檔的協調留待後續：此情境會以共編內容覆蓋外部變更。）
-      saveFile(true, true);
+      return saveFile(true, true, { path, content: txt });
     },
   });
 }
@@ -143,6 +143,8 @@ async function prepareEditorContent() {
   try {
     await ensureCollab();
   } catch (e) {
+    // 等待期間若已切到別的文件，這是舊連線的取消結果，不得覆寫新文件的編輯器內容或狀態。
+    if (state.currentPath !== path) return;
     // 共編連線失敗（例如 bundle 載入失敗）：退回單機編輯，至少不卡在唯讀。
     showToast("即時共編連線失敗，改為單機編輯", "info");
     setEditorValue(state.currentContent);
@@ -194,37 +196,48 @@ export function scheduleAutosave() {
 
 // ===== 儲存檔案 =====
 // force=true 時略過樂觀鎖檢查（使用者在衝突提示中明確選擇覆蓋）。
-export async function saveFile(silent, force) {
-  if (!state.currentPath) return;
+// request 僅供共編 saver 使用：固定本次要寫入的 path/content，避免切檔期間誤存到新文件。
+// 回傳 true 代表後端已確認成功；false 代表未送出、衝突或失敗，供共編狀態機保留 pending 並重試。
+export async function saveFile(silent, force, request = null) {
+  const savingPath = request ? request.path : state.currentPath;
+  if (!savingPath) return false;
   // 唯讀檔案不送出儲存（伺服器端仍會擋；這裡提前攔截避免無謂的 403 與閃爍）
-  if (!state.currentWritable) {
+  if (!request && !state.currentWritable) {
     if (!silent) showToast("此檔案為唯讀，您沒有編輯權限", "info");
-    return;
+    return false;
   }
   // 共編接管時：落檔集中由 saver 進行（避免多人併發或空窗期直接 POST 互踩版本鎖、造成分歧）。
   // 唯有「目前的 saver」會放行；其餘（非 saver、連線空窗期）一律不走舊版存檔，內容由 saver 自動落檔。
-  if (collabManaged() && !collabIsSaver()) {
+  if (!request && collabManaged() && !collabIsSaver()) {
     if (!silent && !force) showToast("共編中：內容會由存檔者自動儲存", "info");
-    return;
+    return false;
   }
-  if (state.currentMode !== "preview" && state.easyMDE) state.currentContent = state.easyMDE.value();
+  let savingContent;
+  if (request) {
+    savingContent = request.content;
+  } else {
+    if (state.currentMode !== "preview" && state.easyMDE) state.currentContent = state.easyMDE.value();
+    savingContent = state.currentContent;
+  }
 
-  const savingPath = state.currentPath; // 存檔期間使用者可能切檔，回寫狀態前須比對
-  saveBtn.disabled = true;
-  saveBtn.textContent = "儲存中…"; // 慢網路時給明確進度回饋
+  // 存檔期間使用者可能切檔，僅操作當下仍對應此文件的工具列。
+  if (state.currentPath === savingPath) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = "儲存中…"; // 慢網路時給明確進度回饋
+  }
   try {
     const url = API_BASE + "/api/file?path=" + encodeURIComponent(savingPath) + (force ? "&force=1" : "");
     const headers = { "Content-Type": "text/plain; charset=utf-8" };
-    if (state.currentVersion) headers["X-File-Version"] = state.currentVersion; // 帶基準版本供後端比對
-    const res = await authFetch(url, { method: "POST", headers, body: state.currentContent });
+    if (state.currentPath === savingPath && state.currentVersion) headers["X-File-Version"] = state.currentVersion; // 帶基準版本供後端比對
+    const res = await authFetch(url, { method: "POST", headers, body: savingContent });
 
     // 409：編輯期間檔案已被他人更新，交由 sync 模組以提示條讓使用者選擇載入或覆蓋
     if (res.status === 409) {
       window.dispatchEvent(new CustomEvent("file:conflict", { detail: { path: savingPath } }));
-      return;
+      return false;
     }
     await ensureOk(res);
-    const byCollabSaver = collabManaged() && collabIsSaver(); // 共編 saver 的自動落檔：回饋改走狀態列
+    const byCollabSaver = !!request || (collabManaged() && collabIsSaver()); // 共編 saver 的自動落檔：回饋改走狀態列
     // 存檔回應期間可能已切換到別的檔案；僅當仍停在同一檔時才回寫版本 / 未存標記，避免污染新檔狀態。
     if (state.currentPath === savingPath) {
       state.currentVersion = res.headers.get("X-File-Version") || state.currentVersion; // 更新基準版本
@@ -236,12 +249,16 @@ export async function saveFile(silent, force) {
     } else {
       showToast(silent ? "已自動儲存" : "儲存成功", silent ? "info" : "success");
     }
+    return true;
   } catch (err) {
     showToast("儲存失敗：" + err.message, "error");
+    return false;
   } finally {
-    saveBtn.textContent = "儲存";
     // 仍停在同一檔才還原按鈕狀態；若已切檔，由 openFile 依新檔權限設定，不在此覆寫。
-    if (state.currentPath === savingPath) saveBtn.disabled = !state.currentWritable;
+    if (state.currentPath === savingPath) {
+      saveBtn.textContent = "儲存";
+      saveBtn.disabled = !state.currentWritable;
+    }
   }
 }
 
