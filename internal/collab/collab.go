@@ -15,6 +15,7 @@ package collab
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/JonaWu05/DocNest/internal/auth"
 	"github.com/JonaWu05/DocNest/internal/authz"
 	"github.com/JonaWu05/DocNest/internal/config"
+	"github.com/JonaWu05/DocNest/internal/store"
 )
 
 const (
@@ -46,6 +48,7 @@ const (
 type Hub struct {
 	auth     *auth.Auth
 	az       *authz.Authz
+	store    *store.Store
 	upgrader websocket.Upgrader
 
 	mu    sync.Mutex
@@ -90,11 +93,12 @@ type controlMsg struct {
 	External  bool   `json:"external,omitempty"`  // 有未處理的外部改檔（init / role 告知接手的 saver 出橫幅）
 }
 
-// New 建立 collab Hub。
-func New(a *auth.Auth, az *authz.Authz, cfg *config.Config) *Hub {
+// New 建立 collab Hub。Store 用來讓 WebSocket、權限與房間 key 共用 REST 檔案 API 的路徑解析規則。
+func New(a *auth.Auth, az *authz.Authz, st *store.Store, cfg *config.Config) *Hub {
 	return &Hub{
-		auth: a,
-		az:   az,
+		auth:  a,
+		az:    az,
+		store: st,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -102,6 +106,24 @@ func New(a *auth.Auth, az *authz.Authz, cfg *config.Config) *Hub {
 		},
 		rooms: map[string]*room{},
 	}
+}
+
+// canonicalPath 將外部傳入的文件路徑解析成 DOC_ROOT 相對 canonical path。
+// 透過 Store.SafeResolve + RelOf 與 REST 檔案 API 共用同一套規則，避免 ./、內部 ..、反斜線等
+// 等價寫法分裂成不同共編房間，也避免權限檢查與實際房間 key 使用不同路徑。
+func (h *Hub) canonicalPath(raw string) (string, error) {
+	if h.store == nil {
+		return "", errors.New("collab store 未設定")
+	}
+	absPath, err := h.store.SafeResolve(raw)
+	if err != nil {
+		return "", err
+	}
+	rel := h.store.RelOf(absPath)
+	if rel == "" || rel == "." {
+		return "", errors.New("文件路徑不可為根目錄")
+	}
+	return rel, nil
 }
 
 // frame 在負載前加上 1 byte tag，組成一個 WebSocket 二進位 frame。
@@ -121,14 +143,19 @@ func ctrlFrame(m controlMsg) []byte {
 // ServeWs 處理 GET /ws/collab?path=xxx：驗證身分（standalone 走 ?token=；
 // portal 另接受認證 cookie）與讀取權後升級並加入房間。
 func (h *Hub) ServeWs(c *gin.Context) {
-	path := c.Query("path")
-	if path == "" {
+	rawPath := c.Query("path")
+	if rawPath == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 path"})
 		return
 	}
 	claims, err := h.auth.AuthenticateWS(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "token 無效、過期或未提供"})
+		return
+	}
+	path, err := h.canonicalPath(rawPath)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "非法的檔案路徑"})
 		return
 	}
 	subject := auth.SubjectFromClaims(claims)
@@ -171,8 +198,15 @@ func (h *Hub) ServeWs(c *gin.Context) {
 	go cl.readPump()
 }
 
-// addClient 把連線加入房間、指派 seed/saver 角色,回傳 init 控制訊息與待回放的 update 快照。
+// addClient 把連線加入 canonical 房間、指派 seed/saver 角色，回傳 init 控制訊息與待回放的 update 快照。
+// 非法路徑回傳 nil；正式 WebSocket 入口會先回應 403，此處再次正規化是 Hub 邊界的防禦性保證。
 func (h *Hub) addClient(path string, cl *client) (initMsg []byte, replay [][]byte) {
+	canonical, err := h.canonicalPath(path)
+	if err != nil {
+		return nil, nil
+	}
+	path = canonical
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -226,6 +260,12 @@ func (h *Hub) RoomPaths() []string {
 // 房內客戶端收到後，由落檔者暫停自動落檔並出橫幅，讓使用者選擇保留共編版本或改用磁碟版本，
 // 避免 saver 下次落檔靜默覆蓋外部變更。無對應房間時為 no-op。
 func (h *Hub) NotifyExternalChange(path string) {
+	canonical, err := h.canonicalPath(path)
+	if err != nil {
+		return
+	}
+	path = canonical
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	r := h.rooms[path]

@@ -120,7 +120,7 @@ func main() {
 	h := hub.New(au, az, cfg)
 	go h.Run()
 
-	collabH := collab.New(au, az, cfg) // 即時共編房間層（/ws/collab）
+	collabH := collab.New(au, az, st, cfg) // 即時共編房間層（/ws/collab）
 
 	// 外部改檔偵測：只輪詢「目前有人開著」的檔（presence 開檔 ∪ 共編房間），
 	// 偵測到非經本程式的改寫時，通知非共編開檔者（file_updated）與共編房間（停自動落檔 + 橫幅）。

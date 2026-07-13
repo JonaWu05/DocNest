@@ -3,6 +3,8 @@ package collab
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/JonaWu05/DocNest/internal/store"
 )
 
 // 測試用：建立一個不接真 WS 的 client（send 緩衝夠大即不會走到關閉 conn 的分支）。
@@ -30,7 +32,10 @@ func drainControl(c *client, typ string) bool {
 	}
 }
 
-func newHub() *Hub { return &Hub{rooms: map[string]*room{}} }
+func newHub(t *testing.T) *Hub {
+	t.Helper()
+	return &Hub{store: store.New(t.TempDir()), rooms: map[string]*room{}}
+}
 
 // findControl 取出 c.send 中第一則指定 type 的控制訊息並回傳其內容；找不到回傳 ok=false。
 func findControl(c *client, typ string) (controlMsg, bool) {
@@ -82,9 +87,65 @@ func parseInit(t *testing.T, initMsg []byte) controlMsg {
 	return m
 }
 
+// TestEquivalentPathsShareRoom：同一文件的等價寫法必須收斂到同一個 canonical room key，
+// 否則兩群使用者會各自編輯不同 CRDT，最後由 saver 互相覆蓋磁碟內容。
+func TestEquivalentPathsShareRoom(t *testing.T) {
+	h := newHub(t)
+	aliases := []string{
+		"notes/a.md",
+		"./notes/a.md",
+		"notes/./a.md",
+		"notes/drafts/../a.md",
+		`notes\a.md`,
+	}
+	for _, alias := range aliases {
+		initMsg, _ := h.addClient(alias, newClient(true))
+		if initMsg == nil {
+			t.Fatalf("addClient(%q) 不應拒絕合法等價路徑", alias)
+		}
+	}
+
+	if len(h.rooms) != 1 {
+		t.Fatalf("等價路徑形成了 %d 個房間，預期 1", len(h.rooms))
+	}
+	r := h.rooms["notes/a.md"]
+	if r == nil {
+		t.Fatalf("canonical room key 不正確：%v", h.RoomPaths())
+	}
+	if len(r.clients) != len(aliases) {
+		t.Errorf("同房 client 數=%d，預期 %d", len(r.clients), len(aliases))
+	}
+}
+
+// TestNotifyExternalChangeCanonicalPath：filewatch 即使以等價路徑通知，也必須命中既有 canonical 房間。
+func TestNotifyExternalChangeCanonicalPath(t *testing.T) {
+	h := newHub(t)
+	h.addClient("notes/a.md", newClient(true))
+
+	h.NotifyExternalChange("notes/./a.md")
+
+	if r := h.rooms["notes/a.md"]; r == nil || !r.extPending {
+		t.Fatal("等價路徑的外部改檔通知未命中 canonical 房間")
+	}
+}
+
+// TestInvalidRoomPathsRejected：越出 DOC_ROOT 或只指向根目錄的路徑不可建立共編房間。
+func TestInvalidRoomPathsRejected(t *testing.T) {
+	h := newHub(t)
+	for _, invalid := range []string{"", ".", "../secret.md", "notes/../../secret.md"} {
+		initMsg, replay := h.addClient(invalid, newClient(true))
+		if initMsg != nil || replay != nil {
+			t.Errorf("addClient(%q) 應拒絕非法路徑", invalid)
+		}
+	}
+	if len(h.rooms) != 0 {
+		t.Errorf("非法路徑不應建立房間，got %v", h.RoomPaths())
+	}
+}
+
 // TestJoinRolesAndSeed：第一個可寫者成為 seeder/saver；唯讀者不 seed、不可寫。
 func TestJoinRolesAndSeed(t *testing.T) {
-	h := newHub()
+	h := newHub(t)
 	w1 := newClient(true)
 	init1, replay1 := h.addClient("doc.md", w1)
 	m1 := parseInit(t, init1)
@@ -105,7 +166,7 @@ func TestJoinRolesAndSeed(t *testing.T) {
 
 // TestUpdateRelayAndReadonly：可寫者的 update 會存入 log 並轉發；唯讀者的 update 被忽略。
 func TestUpdateRelayAndReadonly(t *testing.T) {
-	h := newHub()
+	h := newHub(t)
 	w1 := newClient(true)
 	h.addClient("doc.md", w1)
 	r1 := newClient(false)
@@ -135,7 +196,7 @@ func TestUpdateRelayAndReadonly(t *testing.T) {
 
 // TestLateJoinReplay：晚加入者應收到既有 update 的回放。
 func TestLateJoinReplay(t *testing.T) {
-	h := newHub()
+	h := newHub(t)
 	w1 := newClient(true)
 	h.addClient("doc.md", w1)
 	h.handleFrame(w1, frame(tagUpdate, []byte("aaa")))
@@ -154,7 +215,7 @@ func TestLateJoinReplay(t *testing.T) {
 
 // TestSaverHandoffAndEmptyRoom：saver 離開→移交給其他可寫者；房間清空→回收。
 func TestSaverHandoffAndEmptyRoom(t *testing.T) {
-	h := newHub()
+	h := newHub(t)
 	w1 := newClient(true)
 	h.addClient("doc.md", w1)
 	w2 := newClient(true)
@@ -178,7 +239,7 @@ func TestSaverHandoffAndEmptyRoom(t *testing.T) {
 // TestSoloDeferredStreaming(最佳化 B):單人 init.Stream=false；第二人加入後 init.Stream=true，
 // 且原本獨自在房的 saver 收到 stream:true + sendState 通知（補餵新加入者）。
 func TestSoloDeferredStreaming(t *testing.T) {
-	h := newHub()
+	h := newHub(t)
 	w1 := newClient(true)
 	init1, _ := h.addClient("doc.md", w1)
 	if parseInit(t, init1).Stream {
@@ -198,7 +259,7 @@ func TestSoloDeferredStreaming(t *testing.T) {
 
 // TestStopStreamingWhenSolo(最佳化 B):多人變回單人時，剩餘者收到 stream:false（停止上傳）。
 func TestStopStreamingWhenSolo(t *testing.T) {
-	h := newHub()
+	h := newHub(t)
 	w1 := newClient(true)
 	h.addClient("doc.md", w1)
 	w2 := newClient(true)
@@ -215,7 +276,7 @@ func TestStopStreamingWhenSolo(t *testing.T) {
 // TestLogCompaction(最佳化 A):log 達門檻後 saver 收到 compact 請求；
 // saver 回傳完整狀態後，log 被壓縮為「快照 + 其後 tail」。
 func TestLogCompaction(t *testing.T) {
-	h := newHub()
+	h := newHub(t)
 	w1 := newClientN(true, compactThreshold+16) // saver；緩衝需容納大量廣播
 	h.addClient("doc.md", w1)
 	w2 := newClientN(true, compactThreshold+16)
@@ -242,7 +303,7 @@ func TestLogCompaction(t *testing.T) {
 // TestExternalPendingHandoff：外部改檔待處理期間 saver 離開→移交給新 saver 的 role 應帶 External；
 // 新 saver 送 extResolved 後 extPending 清除（不再於後續移交重複出橫幅）。
 func TestExternalPendingHandoff(t *testing.T) {
-	h := newHub()
+	h := newHub(t)
 	w1 := newClient(true)
 	h.addClient("doc.md", w1)
 	w2 := newClient(true)
@@ -271,7 +332,7 @@ func TestExternalPendingHandoff(t *testing.T) {
 // TestExternalPendingOnJoinAsSaver：外部改檔待處理且房內暫無 saver（原 saver 離開、僅剩唯讀者）時，
 // 後續加入的可寫者接手為 saver，其 init 應帶 External 以出橫幅。
 func TestExternalPendingOnJoinAsSaver(t *testing.T) {
-	h := newHub()
+	h := newHub(t)
 	w1 := newClient(true)
 	h.addClient("doc.md", w1)
 	r1 := newClient(false) // 唯讀者：saver 離開後不會接手
