@@ -1,0 +1,30 @@
+{
+  "name": "docnest",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "以 Go 為後端、原生 JavaScript（ES 模組）為前端的自架 Markdown 文件系統，支援即時多人協作、線上狀態、儲存衝突偵測與權限登入。",
+  "private": true,
+  "scripts": {
+    "check:bundle": "node scripts/check-bundle.mjs",
+    "check:collab": "node scripts/collab-render-check.mjs",
+    "test:logic": "node --test scripts/tests/*.test.mjs",
+    "test:known-bugs": "node --test scripts/tests/known-bugs/*.test.mjs",
+    "test": "npm run check:bundle && npm run check:collab && npm run test:logic"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JonaWu05/DocNest.git"
+  },
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/JonaWu05/DocNest/issues"
+  },
+  "homepage": "https://github.com/JonaWu05/DocNest#readme",
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "jsdom": "^29.1.1",
+    "y-codemirror": "^3.0.1",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.31"
+  }
+}

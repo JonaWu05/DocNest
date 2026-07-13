@@ -17,6 +17,7 @@ const SAVE_DELAY = 1500; // saver 落檔的 debounce 間隔(毫秒),比照 autos
 const AWARENESS_HEARTBEAT = 10000; // awareness 心跳間隔(毫秒):多人時定期重送,維持存活並讓晚加入者看到游標
 const RECONNECT_BASE = 1000; // 共編 WS 重連退避起始延遲(毫秒)
 const RECONNECT_MAX = 30000; // 共編 WS 重連退避上限(毫秒)
+const CONNECT_READY_TIMEOUT = 5000; // 等待伺服器 init / 綁定完成的最長時間
 
 // 游標配色:依使用者名稱雜湊到固定色盤,讓同一人每次都同色、彼此易辨識。
 const USER_COLORS = ["#1f8a70", "#d1495b", "#3d7ea6", "#b8860b", "#7b5cd6", "#c2410c", "#0e7490", "#9d174d"];
@@ -95,12 +96,16 @@ function scheduleSaverSave() {
   if (session.externalChanged) return;
   session.pendingSave = true;
   clearTimeout(session.saveTimer);
-  session.saveTimer = setTimeout(() => {
-    if (session && session.isSaver && session.onSaveRequest) {
-      session.onSaveRequest(session.text.toString());
-      session.pendingSave = false;
-    }
-  }, SAVE_DELAY);
+  session.saveTimer = setTimeout(runSaverSave, SAVE_DELAY);
+}
+
+// runSaverSave 抽出計時器到期後的動作，讓生命週期測試可直接覆蓋 callback / pending 狀態。
+// 目前仍保留既有同步行為；階段 1 會改為等待 Promise 成功後才清除 pendingSave。
+function runSaverSave() {
+  if (session && session.isSaver && session.onSaveRequest) {
+    session.onSaveRequest(session.text.toString());
+    session.pendingSave = false;
+  }
 }
 
 // sendFullState 送出目前文件的完整狀態(Y.encodeStateAsUpdate)。
@@ -336,10 +341,7 @@ export async function connectCollab(path, cm, opts) {
 
   // ready:收到 init 並完成綁定後 resolve;呼叫端據此才解除編輯器唯讀(避免綁定前的編輯被覆蓋)。
   // 加逾時保險,避免 init 一直沒到(例如 WS 卡住)時編輯器永遠卡在唯讀。
-  const ready = new Promise((resolve) => {
-    session.markReady = resolve;
-    setTimeout(resolve, 5000);
-  });
+  const ready = createReadyPromise(session);
 
   // 本端身分(名稱 / 顏色 / 落檔者 / 落檔時間):供其他人的編輯器渲染我的游標標籤,並組成房內參與者清單。
   updateLocalUser();
@@ -373,6 +375,15 @@ export async function connectCollab(path, cm, opts) {
   openSocket(mySession);
 
   await ready; // 等綁定完成再回傳,呼叫端才解除唯讀
+}
+
+// createReadyPromise 集中「等待 init」的生命週期契約，供測試以短 timeout 驗證。
+// 目前逾時仍沿用既有 resolve 行為；階段 1 會改成 reject 並觸發安全的單機回退。
+function createReadyPromise(targetSession, timeoutMs = CONNECT_READY_TIMEOUT) {
+  return new Promise((resolve) => {
+    targetSession.markReady = resolve;
+    setTimeout(resolve, timeoutMs);
+  });
 }
 
 // openSocket 建立(或重建)房間的 WebSocket。斷線時以指數退避自動重連;
@@ -471,3 +482,23 @@ export function disconnectCollab() {
   }
   if (s.doc) s.doc.destroy();
 }
+
+// 僅供 node:test 使用的最小測試接縫。避免複製共編狀態機到測試檔，確保測到的就是正式邏輯。
+// 瀏覽器正式流程不會呼叫這些方法；後續狀態機抽成獨立模組後可移除此接縫。
+export const collabTestHooks = {
+  createReadyPromise,
+  flushBeacon,
+  runSaverSave,
+  setSession(value) {
+    session = value;
+  },
+  clearSession() {
+    if (session) {
+      clearTimeout(session.saveTimer);
+      clearTimeout(session.reconnectTimer);
+      clearInterval(session.heartbeatTimer);
+    }
+    session = null;
+    connectFailed = false;
+  },
+};

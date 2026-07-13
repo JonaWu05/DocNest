@@ -1,6 +1,7 @@
 package files
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -11,6 +12,15 @@ import (
 	"github.com/JonaWu05/DocNest/internal/store"
 	"github.com/gin-gonic/gin"
 )
+
+func newUnrestrictedTestFiles(t *testing.T, root string) *Files {
+	t.Helper()
+	az, err := authz.Load(filepath.Join(t.TempDir(), "missing-permissions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(store.New(root), az, nil, nil, false)
+}
 
 // TestFilterTree 驗證檔案樹依讀取權過濾、並正確標記 writable。
 func TestFilterTree(t *testing.T) {
@@ -169,6 +179,74 @@ func TestPurgeExpiredTrash(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".trash", "1000000000000000002")); err != nil {
 		t.Error("未過期項目應保留")
+	}
+}
+
+// TestCreateExistingDoesNotOverwrite 鎖住最基本的建立契約：已存在檔案必須回 409，內容不可被截斷。
+func TestCreateExistingDoesNotOverwrite(t *testing.T) {
+	root := t.TempDir()
+	p := filepath.Join(root, "a.md")
+	if err := os.WriteFile(p, []byte("keep me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := newUnrestrictedTestFiles(t, root)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/create?path=a.md&type=file", nil)
+	c.Set("subject", "local:test")
+
+	f.Create(c)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("建立既有檔案應回 409，得到 %d", w.Code)
+	}
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "keep me" {
+		t.Fatalf("既有內容被改寫：%q", got)
+	}
+}
+
+// TestMoveToTrashWritesRecoverableEntry 驗證正常軟刪除同時保留內容與完整 metadata。
+func TestMoveToTrashWritesRecoverableEntry(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "notes", "a.md")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("recover me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := newUnrestrictedTestFiles(t, root)
+
+	if err := f.moveToTrash(source, "notes/a.md", "local:test", false); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, trashDirName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("預期 1 個回收項目，得到 %d", len(entries))
+	}
+	m, err := f.readTrashMeta(entries[0].Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Original != "notes/a.md" || m.Name != "a.md" || m.DeletedBy != "local:test" || m.IsDir {
+		t.Fatalf("metadata 不正確：%+v", m)
+	}
+	payload, err := os.ReadFile(filepath.Join(root, trashDirName, entries[0].Name(), m.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != "recover me" {
+		t.Fatalf("回收內容=%q want recover me", payload)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("原始位置應已移除，stat err=%v", err)
 	}
 }
 

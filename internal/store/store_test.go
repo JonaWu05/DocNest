@@ -33,6 +33,21 @@ func TestSafeResolve(t *testing.T) {
 	if _, err := s.SafeResolve("a/../b.md"); err != nil {
 		t.Errorf("內部 .. 但仍在 root 內應允許：%v", err)
 	}
+
+	// 等價寫法必須解析到同一個絕對路徑；上層服務應使用此結果產生 canonical relative path。
+	aliases := []string{"notes/a.md", "./notes/a.md", "notes/./a.md", "notes\\a.md"}
+	var canonical string
+	for _, alias := range aliases {
+		got, err := s.SafeResolve(alias)
+		if err != nil {
+			t.Fatalf("SafeResolve(%q) 不應失敗：%v", alias, err)
+		}
+		if canonical == "" {
+			canonical = got
+		} else if got != canonical {
+			t.Errorf("等價路徑 %q 解析為 %q，預期 %q", alias, got, canonical)
+		}
+	}
 }
 
 func TestRelOf(t *testing.T) {

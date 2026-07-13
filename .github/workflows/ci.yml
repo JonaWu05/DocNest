@@ -43,7 +43,7 @@ jobs:
       - name: go test
         run: go test ./...
 
-  # 前端：esbuild bundle 檢查（無 JS 測試，以此抓 import 斷鏈與語法錯誤）
+  # 前端：鎖定依賴後執行 bundle 與協作渲染檢查。
   frontend:
     runs-on: ubuntu-latest
     steps:
@@ -52,6 +52,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      - name: esbuild bundle check
-        run: npx esbuild web/js/main.js --bundle --outfile=/dev/null
+      - run: npm ci
+      - run: npm test
