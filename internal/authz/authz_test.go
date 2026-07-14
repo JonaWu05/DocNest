@@ -57,6 +57,76 @@ func TestCanEffectiveAccess(t *testing.T) {
 	}
 }
 
+func TestLongestPrefixWinsWithinGroup(t *testing.T) {
+	orders := []struct {
+		name  string
+		rules string
+	}{
+		{
+			name:  "較窄規則在後",
+			rules: `[{"path":"","access":"write"},{"path":"private","access":"read"}]`,
+		},
+		{
+			name:  "較窄規則在前",
+			rules: `[{"path":"private","access":"read"},{"path":"","access":"write"}]`,
+		},
+	}
+	for _, tc := range orders {
+		t.Run(tc.name, func(t *testing.T) {
+			a, err := Load(writePerms(t, `{"default":"none","groups":{
+			  "editors":{"members":["local:alice"],"rules":`+tc.rules+`}
+			}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if a.Can("local:alice", "private/note.md", AccessWrite) {
+				t.Fatal("較窄的 private:read 應覆蓋同群組的根 write")
+			}
+			if !a.Can("local:alice", "private/note.md", AccessRead) {
+				t.Fatal("private 應保留 read")
+			}
+			if !a.Can("local:alice", "public/note.md", AccessWrite) {
+				t.Fatal("未命中 private 時應沿用同群組的根 write")
+			}
+		})
+	}
+}
+
+func TestMostPermissiveResultWinsAcrossGroups(t *testing.T) {
+	a, err := Load(writePerms(t, `{"default":"none","groups":{
+	  "editors":{"members":["local:alice"],"rules":[
+	    {"path":"","access":"write"},
+	    {"path":"private","access":"read"}
+	  ]},
+	  "privateEditors":{"members":["local:alice"],"rules":[
+	    {"path":"private","access":"write"}
+	  ]}
+	}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.Can("local:alice", "private/note.md", AccessWrite) {
+		t.Fatal("不同群組的結果應取最寬鬆，privateEditors:write 應勝過 editors:read")
+	}
+}
+
+func TestDefaultOnlyAppliesWhenNoRuleMatches(t *testing.T) {
+	a, err := Load(writePerms(t, `{"default":"write","groups":{
+	  "restricted":{"members":["local:alice"],"rules":[
+	    {"path":"private","access":"read"}
+	  ]}
+	}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Can("local:alice", "private/note.md", AccessWrite) {
+		t.Fatal("命中 private:read 後不應再與 default:write 取最大值")
+	}
+	if !a.Can("local:alice", "other/note.md", AccessWrite) {
+		t.Fatal("完全沒有規則命中時應使用 default:write")
+	}
+}
+
 func TestHasAnyRead(t *testing.T) {
 	// 無 "*" 群組：未分組者應無任何讀取權
 	a, _ := Load(writePerms(t, `{"default":"none","groups":{

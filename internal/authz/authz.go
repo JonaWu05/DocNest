@@ -59,15 +59,18 @@ type normRule struct {
 	access int
 }
 
+// normRuleSet 保留單一群組的規則邊界。同群組內先取最長前綴；不同群組的結果才取最寬鬆。
+type normRuleSet []normRule
+
 // snapshot 為一份「載入完成後即不可變」的權限設定。
 // 熱重載時整份替換（swap 指標），使進行中的讀取仍看到一致的舊快照、不需在計算期間持鎖。
 type snapshot struct {
-	enabled        bool                  // 是否成功載入設定檔；否則為相容的「全開」模式
-	defaultLevel   int                   // 預設權限等級
-	rulesBySubject map[string][]normRule // subject -> 規則
-	rulesEveryone  []normRule            // 萬用成員 "*" 的規則（套用到所有已登入者）
-	admins         map[string]bool       // AdminGroup 的具名成員（身分鍵 -> true）
-	groupMembers   map[string][]string   // 群組名 -> 成員身分鍵（含 "*"）；供管理面板列出與指派
+	enabled        bool                     // 是否成功載入設定檔；否則為相容的「全開」模式
+	defaultLevel   int                      // 預設權限等級
+	rulesBySubject map[string][]normRuleSet // subject -> 所屬群組的規則集合
+	rulesEveryone  []normRuleSet            // 含萬用成員 "*" 的群組規則（套用到所有已登入者）
+	admins         map[string]bool          // AdminGroup 的具名成員（身分鍵 -> true）
+	groupMembers   map[string][]string      // 群組名 -> 成員身分鍵（含 "*"）；供管理面板列出與指派
 }
 
 // Authz 保存一份可熱重載的權限設定，提供查詢方法。取代原本的 package 級全域。
@@ -82,7 +85,7 @@ type Authz struct {
 // Portal requests must use CanContext/CanPortal with JWT permissions.
 func NewPortalFallback() *Authz {
 	return &Authz{snap: &snapshot{
-		enabled: true, defaultLevel: AccessNone, rulesBySubject: map[string][]normRule{},
+		enabled: true, defaultLevel: AccessNone, rulesBySubject: map[string][]normRuleSet{},
 		admins: map[string]bool{}, groupMembers: map[string][]string{},
 	}}
 }
@@ -141,7 +144,7 @@ func parseConfig(data []byte) (*snapshot, error) {
 	s := &snapshot{
 		enabled:        true,
 		defaultLevel:   accessLevel(cfg.Default),
-		rulesBySubject: map[string][]normRule{},
+		rulesBySubject: map[string][]normRuleSet{},
 		admins:         map[string]bool{},
 		groupMembers:   map[string][]string{},
 	}
@@ -157,10 +160,10 @@ func parseConfig(data []byte) (*snapshot, error) {
 			}
 			mem = append(mem, m)
 			if m == "*" {
-				s.rulesEveryone = append(s.rulesEveryone, rules...)
+				s.rulesEveryone = append(s.rulesEveryone, rules)
 				continue // 萬用成員不計入具名的管理員名單
 			}
-			s.rulesBySubject[m] = append(s.rulesBySubject[m], rules...)
+			s.rulesBySubject[m] = append(s.rulesBySubject[m], rules)
 			if name == AdminGroup {
 				s.admins[m] = true
 			}
@@ -177,24 +180,49 @@ func (a *Authz) current() *snapshot {
 	return a.snap
 }
 
+// longestPrefixAccess 計算單一群組對 target 的有效權限。
+// 最長的路徑前綴優先；同一路徑若重複定義則以設定檔中較後面的規則為準。
+func longestPrefixAccess(rules normRuleSet, target string) (access int, matched bool) {
+	bestLen := -1
+	for _, r := range rules {
+		if !matchPath(r.path, target) {
+			continue
+		}
+		if specificity := len(r.path); specificity >= bestLen {
+			bestLen = specificity
+			access = r.access
+			matched = true
+		}
+	}
+	return access, matched
+}
+
 // effectiveAccess 回傳 subject 對 relPath 的有效權限等級：
-// 以預設等級為基準，取所有命中規則（含萬用規則）中的最大值。
+// 每個命中的群組先各自採最長前綴，再把群組結果取最大值；完全沒有規則命中時才使用 default。
 func (a *Authz) effectiveAccess(subject, relPath string) int {
 	s := a.current()
 	if !s.enabled {
 		return AccessWrite // 未啟用權限分組：全開（相容舊行為）
 	}
 	target := normPath(relPath)
-	eff := s.defaultLevel
-	for _, r := range s.rulesEveryone {
-		if r.access > eff && matchPath(r.path, target) {
-			eff = r.access
+	eff := AccessNone
+	matched := false
+	apply := func(ruleSets []normRuleSet) {
+		for _, rules := range ruleSets {
+			groupAccess, groupMatched := longestPrefixAccess(rules, target)
+			if !groupMatched {
+				continue
+			}
+			if !matched || groupAccess > eff {
+				eff = groupAccess
+			}
+			matched = true
 		}
 	}
-	for _, r := range s.rulesBySubject[subject] {
-		if r.access > eff && matchPath(r.path, target) {
-			eff = r.access
-		}
+	apply(s.rulesEveryone)
+	apply(s.rulesBySubject[subject])
+	if !matched {
+		return s.defaultLevel
 	}
 	return eff
 }
@@ -269,14 +297,18 @@ func (a *Authz) HasAnyRead(subject string) bool {
 	if !s.enabled || s.defaultLevel >= AccessRead {
 		return true
 	}
-	for _, r := range s.rulesEveryone {
-		if r.access >= AccessRead {
-			return true
+	for _, rules := range s.rulesEveryone {
+		for _, r := range rules {
+			if r.access >= AccessRead {
+				return true
+			}
 		}
 	}
-	for _, r := range s.rulesBySubject[subject] {
-		if r.access >= AccessRead {
-			return true
+	for _, rules := range s.rulesBySubject[subject] {
+		for _, r := range rules {
+			if r.access >= AccessRead {
+				return true
+			}
 		}
 	}
 	return false
