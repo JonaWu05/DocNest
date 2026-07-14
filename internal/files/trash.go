@@ -1,10 +1,12 @@
 // 軟刪除 / 資源回收筒：刪除改為移到 DOC_ROOT/.trash（以 . 開頭，buildTree 會自動排除，
 // 不會出現在檔案樹），保留原始路徑等中繼資料供還原。每個回收項目存成一個以時間戳記為名的
-// 子目錄：.trash/<id>/<原始檔名> 為內容，.trash/<id>/meta.json 為中繼資料。
+// 子目錄：.trash/<id>/payload/<原始檔名> 為內容，.trash/<id>/meta.json 為中繼資料。
+// payload 子目錄可避免原始項目本身名為 meta.json 時與中繼資料互相覆蓋。
 package files
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -26,16 +28,19 @@ const trashCleanInterval = 6 * time.Hour
 
 const trashDirName = ".trash"
 
+const trashPayloadLayout = 2
+
 // trashIDRe 限制回收項目 id 僅由數字組成（時間戳記），避免 query 帶入路徑穿越。
 var trashIDRe = regexp.MustCompile(`^[0-9]+$`)
 
 // trashMeta 為回收項目寫入 meta.json 的中繼資料。
 type trashMeta struct {
-	Original  string `json:"original"`  // 原始 DOC_ROOT 相對路徑
-	Name      string `json:"name"`      // 原始 basename
-	IsDir     bool   `json:"isDir"`     //
-	DeletedAt string `json:"deletedAt"` // RFC3339
-	DeletedBy string `json:"deletedBy"` // 刪除者身分鍵
+	Original  string `json:"original"`         // 原始 DOC_ROOT 相對路徑
+	Name      string `json:"name"`             // 原始 basename
+	IsDir     bool   `json:"isDir"`            //
+	DeletedAt string `json:"deletedAt"`        // RFC3339
+	DeletedBy string `json:"deletedBy"`        // 刪除者身分鍵
+	Layout    int    `json:"layout,omitempty"` // 2=payload 子目錄；0=舊版內容直接位於 entryDir
 }
 
 // TrashItem 為回傳給前端的回收項目（不含 deletedBy）。
@@ -55,26 +60,66 @@ func underTrash(rel string) bool {
 	return rel == trashDirName || strings.HasPrefix(rel, trashDirName+"/")
 }
 
-// moveToTrash 把目標移入 .trash/<id>/，並寫入 meta.json。
+// moveToTrash 把目標移入 .trash/<id>/payload/，並寫入 meta.json。
+// metadata 寫入失敗時會把 payload 移回原始位置；rollback 也失敗時保留 entryDir 供人工復原。
 func (f *Files) moveToTrash(absPath, originalRel, subject string, isDir bool) error {
-	id := strconv.FormatInt(time.Now().UnixNano(), 10)
-	entryDir := filepath.Join(f.trashDir(), id)
-	if err := os.MkdirAll(entryDir, 0o755); err != nil {
-		return err
-	}
-	name := filepath.Base(absPath)
-	if err := os.Rename(absPath, filepath.Join(entryDir, name)); err != nil {
-		return err
-	}
+	now := time.Now()
 	meta := trashMeta{
 		Original:  originalRel,
-		Name:      name,
+		Name:      filepath.Base(absPath),
 		IsDir:     isDir,
-		DeletedAt: time.Now().Format(time.RFC3339),
+		DeletedAt: now.Format(time.RFC3339),
 		DeletedBy: subject,
+		Layout:    trashPayloadLayout,
 	}
-	data, _ := json.MarshalIndent(meta, "", "  ")
-	return os.WriteFile(filepath.Join(entryDir, "meta.json"), data, 0o644)
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(f.trashDir(), 0o755); err != nil {
+		return err
+	}
+
+	// 以 Mkdir 排他保留 id；即使極端並發取得相同 UnixNano，也不會共用同一個回收項目目錄。
+	var entryDir string
+	for candidate := now.UnixNano(); ; candidate++ {
+		entryDir = filepath.Join(f.trashDir(), strconv.FormatInt(candidate, 10))
+		err = os.Mkdir(entryDir, 0o755)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		break
+	}
+	payloadDir := filepath.Join(entryDir, "payload")
+	if err := os.Mkdir(payloadDir, 0o755); err != nil {
+		_ = os.RemoveAll(entryDir)
+		return err
+	}
+	payloadPath := filepath.Join(payloadDir, meta.Name)
+	if err := os.Rename(absPath, payloadPath); err != nil {
+		_ = os.RemoveAll(entryDir)
+		return err
+	}
+	if err := f.writeTrashMeta(filepath.Join(entryDir, "meta.json"), data); err != nil {
+		if rollbackErr := os.Rename(payloadPath, absPath); rollbackErr != nil {
+			return fmt.Errorf("寫入回收筒 metadata 失敗：%w；rollback 亦失敗：%v", err, rollbackErr)
+		}
+		_ = os.RemoveAll(entryDir)
+		return fmt.Errorf("寫入回收筒 metadata 失敗，已還原原始內容：%w", err)
+	}
+	return nil
+}
+
+// trashPayloadPath 依 metadata layout 回傳內容位置；layout=0 相容階段 4 前既有回收項目。
+func (f *Files) trashPayloadPath(id string, m trashMeta) string {
+	entryDir := filepath.Join(f.trashDir(), id)
+	if m.Layout >= trashPayloadLayout {
+		return filepath.Join(entryDir, "payload", m.Name)
+	}
+	return filepath.Join(entryDir, m.Name)
 }
 
 // readTrashMeta 讀取並解析某回收項目（id）的 meta.json。
@@ -149,7 +194,7 @@ func (f *Files) RestoreTrash(c *gin.Context) {
 		httpx.ServerError(c, "建立目錄失敗", err)
 		return
 	}
-	if err := os.Rename(filepath.Join(f.trashDir(), id, m.Name), targetAbs); err != nil {
+	if err := os.Rename(f.trashPayloadPath(id, m), targetAbs); err != nil {
 		httpx.ServerError(c, "還原失敗", err)
 		return
 	}

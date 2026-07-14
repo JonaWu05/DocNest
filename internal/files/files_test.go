@@ -238,7 +238,10 @@ func TestMoveToTrashWritesRecoverableEntry(t *testing.T) {
 	if m.Original != "notes/a.md" || m.Name != "a.md" || m.DeletedBy != "local:test" || m.IsDir {
 		t.Fatalf("metadata 不正確：%+v", m)
 	}
-	payload, err := os.ReadFile(filepath.Join(root, trashDirName, entries[0].Name(), m.Name))
+	if m.Layout != trashPayloadLayout {
+		t.Fatalf("新回收項目 layout=%d，預期 %d", m.Layout, trashPayloadLayout)
+	}
+	payload, err := os.ReadFile(f.trashPayloadPath(entries[0].Name(), m))
 	if err != nil {
 		t.Fatal(err)
 	}

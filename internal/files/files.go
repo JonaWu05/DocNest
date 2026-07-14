@@ -38,6 +38,9 @@ type Files struct {
 	watch WriteNotifier // 寫檔後登記版本給 filewatch（可為 nil）
 	fsync bool          // 存檔是否強制刷盤（由設定注入）
 
+	// writeTrashMeta 以原子寫入保存回收筒 metadata；保留函式接縫供測試穩定注入寫入失敗。
+	writeTrashMeta func(path string, data []byte) error
+
 	// 來源文件 → 其引用的 asset 集合的解析快取（供 Raw 的「來源驗證」授權使用）。
 	// 以 size+mtime 版本識別判斷是否過期，避免同一頁多張圖重複讀檔解析。
 	refMu    sync.RWMutex
@@ -56,7 +59,13 @@ const maxRefCacheEntries = 512
 
 // New 建立 Files handler 集合。watch 可為 nil（不啟用外部改檔偵測，如測試）。
 func New(st *store.Store, az *authz.Authz, h *hub.Hub, watch WriteNotifier, fsync bool) *Files {
-	return &Files{store: st, az: az, hub: h, watch: watch, fsync: fsync, refCache: map[string]refCacheEntry{}}
+	return &Files{
+		store: st, az: az, hub: h, watch: watch, fsync: fsync,
+		writeTrashMeta: func(path string, data []byte) error {
+			return store.AtomicWrite(path, data, 0o644, false)
+		},
+		refCache: map[string]refCacheEntry{},
+	}
 }
 
 // fileVersion 由檔案的大小與修改時間（奈秒）組出版本識別，作為樂觀鎖的版本（ETag 風格）。
@@ -350,24 +359,37 @@ func (f *Files) Create(c *gin.Context) {
 		return
 	}
 
+	if itemType == "file" && !store.IsAllowedFile(absPath) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "僅能建立 .md 或 .txt 檔案"})
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		httpx.ServerError(c, "建立上層目錄失敗", err)
+		return
+	}
+
+	// 最終建立必須由作業系統原子地判定「不存在才建立」，不能只依賴上方 Stat，
+	// 否則兩個並發請求可能同時通過檢查並都回報成功。
+	var createErr error
 	if itemType == "dir" {
-		if err := os.MkdirAll(absPath, 0o755); err != nil {
-			httpx.ServerError(c, "建立資料夾失敗", err)
-			return
-		}
+		createErr = os.Mkdir(absPath, 0o755)
 	} else {
-		if !store.IsAllowedFile(absPath) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "僅能建立 .md 或 .txt 檔案"})
+		var file *os.File
+		file, createErr = os.OpenFile(absPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if createErr == nil {
+			if closeErr := file.Close(); closeErr != nil {
+				_ = os.Remove(absPath)
+				createErr = closeErr
+			}
+		}
+	}
+	if createErr != nil {
+		if errors.Is(createErr, os.ErrExist) {
+			c.JSON(http.StatusConflict, gin.H{"error": "同名的檔案或資料夾已存在"})
 			return
 		}
-		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
-			httpx.ServerError(c, "建立目錄失敗", err)
-			return
-		}
-		if err := os.WriteFile(absPath, []byte{}, 0o644); err != nil {
-			httpx.ServerError(c, "建立檔案失敗", err)
-			return
-		}
+		httpx.ServerError(c, "建立檔案或資料夾失敗", createErr)
+		return
 	}
 
 	f.invalidateFor(f.store.RelOf(absPath))
