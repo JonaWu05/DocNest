@@ -2,3 +2,6 @@
 web/vendor/** linguist-vendored
 # 建置 / 壓測用的開發工具腳本
 scripts/** linguist-vendored
+
+# Shell 腳本固定使用 LF，避免從 Windows checkout 後無法在 Linux 執行
+*.sh text eol=lf

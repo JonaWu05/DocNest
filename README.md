@@ -53,6 +53,20 @@ go run .
 
 啟動後瀏覽 <http://localhost:8080>。文件預設存放於 `./docs`（`DOC_ROOT`）。
 
+### 編譯 Linux 執行檔
+
+在 Linux 上可透過建置腳本產生 `bin/DocNest`：
+
+```bash
+sh scripts/build-linux.sh
+```
+
+程式會從目前工作目錄讀取 `.env`、`web/`、`config/` 與 `docs/`，因此請由專案根目錄啟動：
+
+```bash
+./bin/DocNest
+```
+
 ## 設定（.env）
 
 | 變數 | 必填 | 說明 |
