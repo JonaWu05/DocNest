@@ -6,15 +6,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>使用者管理</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚙️</text></svg>">
-  <link rel="preload" as="style" href="/static/vendor/fontawesome/css/font-awesome.min.css"
-        onload="this.onload=null;this.rel='stylesheet'">
+  <link rel="preload" as="style" href="/static/vendor/fontawesome/css/font-awesome.min.css">
+  <script src="/static/js/preload-css.js"></script>
   <noscript><link rel="stylesheet" href="/static/vendor/fontawesome/css/font-awesome.min.css"></noscript>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 
 <body>
   <!-- 沿用主編輯器的深/淺色偏好（此頁不載入 main.js，於 body 起始提早套用避免閃爍）-->
-  <script>if (localStorage.getItem("theme") === "dark") document.body.classList.add("dark");</script>
+  <script src="/static/js/theme-early.js"></script>
   <div class="admin-page">
     <header class="admin-header">
       <h1><i class="fa fa-users"></i> 使用者管理</h1>

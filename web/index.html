@@ -15,8 +15,8 @@
   <!-- 第三方相依一律由後端 /static/vendor 本地提供（pinned 版本），不依賴外部 CDN -->
   <!-- FontAwesome 4.7（EasyMDE 工具列圖示）：以 preload 非阻擋方式載入，下載完才升為 stylesheet，
        避免登入頁僅用 1 個圖示卻被整份 CSS 與字型阻擋首屏渲染 -->
-  <link rel="preload" as="style" href="/static/vendor/fontawesome/css/font-awesome.min.css"
-        onload="this.onload=null;this.rel='stylesheet'">
+  <link rel="preload" as="style" href="/static/vendor/fontawesome/css/font-awesome.min.css">
+  <script src="/static/js/preload-css.js"></script>
   <noscript><link rel="stylesheet" href="/static/vendor/fontawesome/css/font-awesome.min.css"></noscript>
   <!-- EasyMDE（編輯器，約 326KB）改由 js/vendor.js 在進入編輯模式時才動態載入，不放入首屏關鍵路徑 -->
   <!-- marked.js：Markdown 轉 HTML（預覽才用得到，defer 不阻擋渲染）-->

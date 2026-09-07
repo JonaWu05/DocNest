@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -48,6 +49,37 @@ var tokenQueryRE = regexp.MustCompile(`([?&]token=)[^&]+`)
 // redactToken 將路徑中的 token 值換成 REDACTED，避免 JWT 落入日誌。
 func redactToken(path string) string {
 	return tokenQueryRE.ReplaceAllString(path, "${1}REDACTED")
+}
+
+// cspPolicy 為內容安全政策（CSP）指令集，作為 DOMPurify 之外對 XSS 的第二層縱深防禦。
+//   - script-src 刻意不含 unsafe-inline / unsafe-eval：所有指令碼皆為外部檔（/static/js、/static/vendor）。
+//   - style-src 含 unsafe-inline：EasyMDE/Markdown 預覽與登入頁自訂背景（LOGIN_BG）皆會寫入 inline style。
+//   - img-src 含 https:：Markdown 內文允許連結外部圖片，故不收斂到僅 'self'。
+//   - connect-src 'self' 同時涵蓋同源 fetch 與 WebSocket（/ws、/ws/collab）。
+//   - frame-ancestors 'none'：防止本站被以 <iframe> 嵌入他站造成點擊劫持，零風險先加。
+//
+// 先以 Content-Security-Policy-Report-Only 上線觀察，違規僅回報至 /csp-report、不擋請求；
+// 確認乾淨一段時間後再切換成正式 Content-Security-Policy 強制。
+const cspPolicy = "default-src 'self'; " +
+	"script-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: https:; " +
+	"connect-src 'self'; " +
+	"font-src 'self'; " +
+	"frame-ancestors 'none'; " +
+	"object-src 'none'; " +
+	"base-uri 'self'; " +
+	"form-action 'self'; " +
+	"report-uri /csp-report"
+
+// cspReportHandler 接收瀏覽器回報的 CSP 違規（Report-Only 階段用於觀察、修違規）。
+// 不驗證內容結構（不同瀏覽器回報格式略有差異），僅截斷長度後原樣記錄，避免記錄雜訊或被灌爆日誌。
+func cspReportHandler(c *gin.Context) {
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 8192))
+	if err == nil && len(body) > 0 {
+		slog.Warn("CSP 違規回報", "report", string(body))
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // accessLogger 為以 slog 輸出的存取紀錄中介層（取代 gin 內建文字格式），並遮罩 query 中的 token。
@@ -202,6 +234,10 @@ func main() {
 		case p == "/" || p == "/index.html" || strings.HasPrefix(p, "/static/"):
 			c.Header("Cache-Control", "no-cache")
 		}
+		// CSP 只對實際頁面（HTML 文件）有意義，靜態資源、API、WS 請求不需要也不設。
+		if p == "/" || p == "/index.html" || p == "/admin" {
+			c.Header("Content-Security-Policy-Report-Only", cspPolicy)
+		}
 		c.Next()
 	})
 
@@ -210,6 +246,7 @@ func main() {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	r.POST("/csp-report", cspReportHandler) // 瀏覽器回報 CSP 違規（Report-Only 觀察期用）；公開、匿名、無需登入
 
 	r.LoadHTMLFiles("./web/index.html")
 	// 預先組好登入背景的 CSS 覆寫規則。LOGIN_BG 由營運者經環境變數設定（可信來源），
