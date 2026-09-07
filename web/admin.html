@@ -6,9 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>使用者管理</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚙️</text></svg>">
-  <link rel="preload" as="style" href="/static/vendor/fontawesome/css/font-awesome.min.css">
-  <script src="/static/js/preload-css.js"></script>
-  <noscript><link rel="stylesheet" href="/static/vendor/fontawesome/css/font-awesome.min.css"></noscript>
+  <!-- FontAwesome：直接載入為一般 stylesheet（原 preload+JS 換裝寫法在真實部署下不夠穩固，
+       曾導致圖示整批消失，改回最單純可靠的寫法，見 index.html 同一處註解） -->
+  <link rel="stylesheet" href="/static/vendor/fontawesome/css/font-awesome.min.css">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 
