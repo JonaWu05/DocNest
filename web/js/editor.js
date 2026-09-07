@@ -18,6 +18,7 @@ import { openDocPicker } from "./docPicker.js";
 import { connectCollab, disconnectCollab, collabActive, collabManaged, collabIsSaver, collabCurrentPath, collabNoteSaved } from "./collab.js";
 import { renderCollabStatus } from "./collabStatus.js";
 import { setCollabExternal } from "./collabExternal.js";
+import { renderBreadcrumb } from "./fileTree.js";
 
 // 打字時的預覽 / 目錄更新採 debounce：連續輸入停止約 150ms 後才重算一次，
 // 避免每個按鍵都全量 marked.parse + 重建 DOM 造成卡頓。
@@ -301,7 +302,7 @@ export async function openFile(path, labelEl) {
     // 此檔是否可寫：由檔案樹節點標記（找不到標記時預設可寫，伺服器端仍會擋無權限的儲存）
     state.currentWritable = !labelEl || labelEl.dataset.writable !== "";
 
-    fileNameEl.textContent = labelEl?.dataset.title || path;
+    renderBreadcrumb(path, labelEl?.dataset.title);
     modeButtons.forEach(b => b.disabled = false);
     // 唯讀檔案：停用儲存與附件上傳（編輯器本身也會設為唯讀，見 applyMode）
     saveBtn.disabled = !state.currentWritable;

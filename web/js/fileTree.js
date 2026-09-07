@@ -50,6 +50,55 @@ function setFolderGlyph(glyph, open) {
   glyph.classList.toggle("fa-folder-o", !open);
 }
 
+// revealFolder 展開至指定資料夾（含自身）、捲動到該節點並短暫高亮，供麵包屑點擊「跳回檔案樹」使用。
+// 直接操作既有 DOM、重用既有的收合切換點擊處理常式（保持圖示與 expandedDirs 同步），不整棵樹重新拉資料。
+export function revealFolder(path) {
+  const parts = path.split("/");
+  let acc = "";
+  for (const p of parts) {
+    acc = acc ? acc + "/" + p : p;
+    const label = fileTreeEl.querySelector('.tree-label[data-path="' + CSS.escape(acc) + '"]');
+    const childrenWrap = label?.nextElementSibling; // renderNode 中 label 後緊接 childrenWrap
+    if (childrenWrap?.classList.contains("collapsed")) label.click();
+  }
+  const target = fileTreeEl.querySelector('.tree-label[data-path="' + CSS.escape(path) + '"]');
+  if (!target) return;
+  document.body.classList.add("sidebar-open"); // 行動裝置版側欄為抽屜，需先開啟；桌面版無對應樣式，不受影響
+  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  target.classList.add("tree-flash");
+  setTimeout(() => target.classList.remove("tree-flash"), 1200);
+}
+
+// renderBreadcrumb 依目前開啟的檔案路徑，於工具列渲染可點擊的資料夾路徑（麵包屑）。
+// 資料夾顯示名稱優先讀取檔案樹已渲染節點的 data-title（與標題顯示規則一致），找不到時退回原始資料夾名稱；
+// 最後一段（檔案本身）不可點擊，僅顯示標題。
+export function renderBreadcrumb(path, fileTitle) {
+  fileNameEl.innerHTML = "";
+  const parts = path.split("/");
+  const fileName = parts.pop();
+  let acc = "";
+  parts.forEach(p => {
+    acc = acc ? acc + "/" + p : p;
+    const folderPath = acc;
+    const folderLabel = fileTreeEl.querySelector('.tree-label[data-path="' + CSS.escape(folderPath) + '"]');
+    const seg = document.createElement("span");
+    seg.className = "crumb-link";
+    seg.textContent = folderLabel?.dataset.title || p;
+    seg.title = "跳回檔案樹：" + seg.textContent;
+    seg.addEventListener("click", () => revealFolder(folderPath));
+    fileNameEl.appendChild(seg);
+
+    const sep = document.createElement("span");
+    sep.className = "crumb-sep";
+    sep.textContent = "/";
+    fileNameEl.appendChild(sep);
+  });
+  const current = document.createElement("span");
+  current.className = "crumb-current";
+  current.textContent = fileTitle || fileName;
+  fileNameEl.appendChild(current);
+}
+
 // 將某路徑的所有上層資料夾標記為展開（新增/改名後讓目標項目可見）
 function expandAncestors(path) {
   const parts = path.split("/");
@@ -333,7 +382,7 @@ async function renameItem(node) {
     showToast("重新命名成功", "success");
     if (state.currentPath === node.path) {
       state.currentPath = newPath.trim();
-      fileNameEl.textContent = state.currentPath;
+      renderBreadcrumb(state.currentPath);
     }
     await loadFileTree();
   } catch (err) {

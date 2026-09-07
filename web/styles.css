@@ -304,9 +304,8 @@ body.resizing-sidebar {
 #current-file {
   font-weight: bold;
   flex: 1;
-  min-width: 140px; /* 可收縮並以省略號顯示，但保留最小可讀寬度 */
+  min-width: 140px; /* 可收縮，但保留最小可讀寬度 */
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text);
 }
@@ -314,6 +313,50 @@ body.resizing-sidebar {
 #dirty-dot {
   color: #ed4014;
   margin-right: 4px;
+}
+
+/* 麵包屑：#file-name 內容改為多段可點擊路徑時使用（見 fileTree.js renderBreadcrumb）。
+   路徑過長時整段可橫向捲動，不做省略號截斷——多個子元素混排時省略號效果不可靠，且會讓後段路徑無法點擊。 */
+#file-name {
+  display: inline-flex;
+  align-items: baseline;
+  overflow-x: auto;
+  scrollbar-width: none; /* 工具列上的路徑捲動列不需要視覺上佔位的捲軸 */
+}
+
+#file-name::-webkit-scrollbar {
+  display: none;
+}
+
+.crumb-link {
+  font-weight: normal;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.crumb-link:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.crumb-sep {
+  opacity: 0.4;
+  margin: 0 4px;
+}
+
+.crumb-current {
+  white-space: nowrap;
+}
+
+/* 從麵包屑點回檔案樹時，短暫高亮目標節點方便定位 */
+@keyframes tree-flash {
+  0%, 100% { background: transparent; }
+  15%, 55% { background: var(--active); }
+}
+
+.tree-flash {
+  animation: tree-flash 1.2s ease-out;
 }
 
 #mode-group {
