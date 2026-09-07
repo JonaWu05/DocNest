@@ -99,6 +99,7 @@
         </div>
         <button class="tool-btn" id="attach-btn" title="上傳圖片或附件並插入" disabled><i class="fa fa-paperclip"></i> 附件</button>
         <button class="tool-btn" id="export-btn" title="匯出 PDF（透過瀏覽器列印，於對話框選「另存為 PDF」）" disabled><i class="fa fa-file-pdf-o"></i> PDF</button>
+        <button class="tool-btn" id="graph-btn" title="結構圖：整個文件庫的連結關係"><i class="fa fa-sitemap"></i> 結構圖</button>
         <label class="autosave-label" title="編輯後自動儲存">
           <input type="checkbox" id="autosave-toggle"> 自動儲存
         </label>
@@ -149,6 +150,12 @@
         </div>
         <div id="preview-pane">
           <div class="empty-state"><i class="fa fa-file-text-o"></i><p>從左側選擇一個檔案開始閱讀或編輯</p></div>
+        </div>
+        <!-- 結構圖：整個文件庫的連結關係，取代編輯/預覽區顯示；點節點開檔並自動關閉 -->
+        <div id="graph-pane" class="hidden">
+          <canvas id="graph-canvas"></canvas>
+          <div id="graph-hint" class="graph-hint">滾輪縮放、拖曳平移；點圓點開啟文件，點方形跳回該資料夾</div>
+          <div id="graph-empty" class="empty-state hidden"><i class="fa fa-sitemap"></i><p>目前沒有可顯示的文件連結</p></div>
         </div>
       </div>
     </main>

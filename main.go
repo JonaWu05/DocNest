@@ -231,7 +231,7 @@ func main() {
 		switch {
 		case strings.HasPrefix(p, "/static/vendor/"):
 			c.Header("Cache-Control", "public, max-age=31536000, immutable")
-		case p == "/" || p == "/index.html" || strings.HasPrefix(p, "/static/"):
+		case p == "/" || p == "/index.html" || p == "/admin" || strings.HasPrefix(p, "/static/"):
 			c.Header("Cache-Control", "no-cache")
 		}
 		// CSP 只對實際頁面（HTML 文件）有意義，靜態資源、API、WS 請求不需要也不設。
@@ -315,6 +315,7 @@ func main() {
 		}
 		api.GET("/online-count", h.OnlineCountHandler)
 		api.GET("/files", fileH.ListFiles)
+		api.GET("/graph", fileH.Graph) // 結構圖：文件間站內連結的節點與邊（依讀取權過濾）
 		api.GET("/file", fileH.ReadFile)
 		api.POST("/file", fileH.WriteFile)
 		api.DELETE("/file", fileH.DeleteFile)

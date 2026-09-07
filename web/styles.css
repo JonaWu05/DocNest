@@ -492,6 +492,47 @@ body.resizing-sidebar {
   padding-right: max(32px, (100% - 1300px) / 2);
 }
 
+/* 結構圖：取代編輯/預覽區，填滿主畫面空間（見 graph.js） */
+#graph-pane {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+#graph-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.graph-hint {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  pointer-events: none; /* 純提示文字，不擋滑鼠操作畫布 */
+}
+
+#graph-empty {
+  position: absolute;
+  inset: 0;
+  min-height: 0; /* 覆蓋 .empty-state 的 min-height:64vh，避免在 inset:0 容器裡撐爆溢出 */
+}
+
+#graph-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
 #preview-pane img {
   max-width: 100%;
   border-radius: 6px;

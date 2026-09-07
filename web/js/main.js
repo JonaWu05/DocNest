@@ -25,6 +25,7 @@ import { initSession, setEnterAppHandler } from "./session.js";
 import { connectWS, onMessage } from "./ws.js";
 import { handlePresenceUpdate } from "./presence.js";
 import { handleFileUpdated, initSync } from "./sync.js";
+import { initGraph } from "./graph.js";
 
 // ===== 事件綁定 =====
 modeButtons.forEach(btn => btn.addEventListener("click", () => applyMode(btn.dataset.mode)));
@@ -119,6 +120,7 @@ initShortcuts();
 initSidebarResize(); // 側欄寬度拖曳調整
 initLightbox(); // 預覽圖片點擊放大
 initSync(); // 綁定 file_updated 提示條的載入/忽略按鈕
+initGraph(); // 結構圖按鈕與畫布互動
 
 // 註冊 WebSocket 訊息處理（連線在登入後才建立）
 onMessage("presence_update", handlePresenceUpdate);
